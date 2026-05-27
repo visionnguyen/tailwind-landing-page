@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>🎭 Bạn Là Ai? – Trò Chơi Ma Thuật</title>
+  <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #06050f;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Georgia', 'Times New Roman', serif;
+      overflow: hidden;
+      color: #fff;
+    }
+
+    /* ── starfield ── */
+    #starfield {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    }
+
+    /* ── screens ── */
+    .screen {
+      position: relative; z-index: 1;
+      width: 100%; max-width: 480px;
+      display: flex; flex-direction: column;
+      align-items: center; padding: 16px;
+      gap: 12px;
+    }
+    .screen.hidden { display: none !important; }
+
+    /* ── loading ── */
+    #loading-screen {
+      position: fixed; inset: 0; z-index: 500;
+      background: #06050f;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 16px;
+    }
+    .spinner {
+      width: 52px; height: 52px;
+      border: 3px solid rgba(240,192,64,.2);
+      border-top-color: #f0c040;
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #load-text { color: #f0c040; font-size: 1em; letter-spacing: .05em; }
+
+    /* ── title ── */
+    .game-title {
+      font-size: 2em;
+      background: linear-gradient(135deg, #f0c040, #e8830a, #f0c040);
+      background-size: 200%;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: shimmer 3s linear infinite;
+      text-align: center;
+      line-height: 1.2;
+    }
+    @keyframes shimmer { 0%{background-position:0%} 100%{background-position:200%} }
+
+    .subtitle {
+      color: rgba(255,255,255,.65);
+      font-size: .9em;
+      text-align: center;
+      line-height: 1.6;
+    }
+
+    /* ── portrait frame ── */
+    .portrait-wrapper {
+      position: relative;
+      width: 280px; height: 420px;
+    }
+    /* animated rainbow border */
+    .portrait-wrapper::before {
+      content: '';
+      position: absolute; inset: -3px;
+      border-radius: 10px;
+      background: linear-gradient(45deg,#f0c040,#e83060,#3090f0,#60f090,#f0c040);
+      background-size: 300%;
+      animation: borderSpin 4s linear infinite;
+      z-index: -1;
+      filter: blur(5px);
+    }
+    @keyframes borderSpin { 0%{background-position:0%} 100%{background-position:300%} }
+
+    #webcam-video {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+      border-radius: 8px;
+    }
+
+    #portrait-canvas,
+    #guide-canvas {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      border-radius: 8px;
+    }
+    #portrait-canvas { z-index: 2; }
+    #guide-canvas    { z-index: 3; pointer-events: none; }
+
+    /* ── progress ── */
+    #progress-track {
+      width: 280px; height: 12px;
+      background: rgba(255,255,255,.1);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    #progress-fill {
+      height: 100%; width: 0%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #e83060, #f0c040);
+      transition: width .12s ease;
+      box-shadow: 0 0 8px rgba(240,192,64,.6);
+    }
+    #status-text {
+      color: rgba(255,255,255,.7);
+      font-size: .85em;
+      text-align: center;
+      min-height: 1.4em;
+    }
+
+    /* ── buttons ── */
+    .btn {
+      padding: 12px 36px;
+      border: none; border-radius: 999px;
+      cursor: pointer; font-size: 1.05em;
+      font-family: inherit; font-weight: bold;
+      transition: transform .15s, box-shadow .15s;
+      outline: none;
+    }
+    .btn:hover  { transform: scale(1.06); }
+    .btn:active { transform: scale(.97); }
+    .btn-gold {
+      background: linear-gradient(135deg,#f0c040,#e8830a);
+      color: #1a0800;
+      box-shadow: 0 4px 22px rgba(240,192,64,.45);
+    }
+    .btn-gold:hover { box-shadow: 0 6px 32px rgba(240,192,64,.75); }
+
+    /* ── win screen ── */
+    #win-canvas {
+      width: 280px; height: 420px;
+      border-radius: 8px;
+      display: block;
+    }
+
+    #win-msg {
+      text-align: center;
+      font-size: 1.25em;
+      line-height: 1.6;
+      color: #f0c040;
+      text-shadow: 0 0 20px rgba(240,192,64,.7);
+      animation: glowPulse 1.6s ease-in-out infinite alternate;
+      max-width: 320px;
+    }
+    @keyframes glowPulse {
+      from { text-shadow: 0 0 10px #f0c040, 0 0 20px rgba(240,100,0,.5); }
+      to   { text-shadow: 0 0 30px #f0c040, 0 0 60px orange, 0 0 90px yellow; }
+    }
+
+    /* ── particles ── */
+    .spark {
+      position: fixed; border-radius: 50%;
+      pointer-events: none; z-index: 400;
+      animation: sparkFly linear forwards;
+    }
+    @keyframes sparkFly {
+      0%   { opacity: 1; transform: translate(0,0) scale(1); }
+      100% { opacity: 0; transform: translate(var(--tx),var(--ty)) scale(0); }
+    }
+
+    /* ── canvas for preview in intro ── */
+    #preview-canvas {
+      width: 140px; height: 210px;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+
+<!-- STARFIELD -->
+<canvas id="starfield"></canvas>
+
+<!-- LOADING -->
+<div id="loading-screen">
+  <div class="spinner"></div>
+  <p id="load-text">Đang triệu hồi phép thuật… ✨</p>
+</div>
+
+<!-- INTRO -->
+<div id="intro-screen" class="screen hidden">
+  <div class="game-title">🎭 Bạn Là Ai?</div>
+  <p class="subtitle">Một bức chân dung huyền bí đang thiếu một phần.<br>Hãy đặt <strong>mũi</strong> và <strong>miệng</strong> của bạn vào ô trống!</p>
+  <canvas id="preview-canvas" width="140" height="210"></canvas>
+  <p class="subtitle" style="font-size:.8em;">👆 Ô trống chờ bạn hoàn thiện</p>
+  <button id="start-btn" class="btn btn-gold">🎬 Bắt Đầu Chơi</button>
+  <p style="color:rgba(255,255,255,.35);font-size:.72em;">Cần cho phép truy cập camera</p>
+</div>
+
+<!-- GAME -->
+<div id="game-screen" class="screen hidden">
+  <div class="game-title" style="font-size:1.35em;">🎭 Nhân Vật Bí Ẩn</div>
+  <p class="subtitle" style="font-size:.82em;">Đặt mũi và miệng vào ô vàng ✨</p>
+
+  <div class="portrait-wrapper">
+    <video id="webcam-video" autoplay muted playsinline></video>
+    <canvas id="portrait-canvas" width="280" height="420"></canvas>
+    <canvas id="guide-canvas"    width="280" height="420"></canvas>
+  </div>
+
+  <div id="progress-track"><div id="progress-fill"></div></div>
+  <p id="status-text">👆 Di chuyển mặt vào ô trống…</p>
+</div>
+
+<!-- WIN -->
+<div id="win-screen" class="screen hidden">
+  <div class="game-title" style="font-size:1.3em;">✨ PHÉP THUẬT! ✨</div>
+  <canvas id="win-canvas" width="280" height="420"></canvas>
+  <p id="win-msg"></p>
+  <button id="again-btn" class="btn btn-gold">🔄 Chơi Lại</button>
+</div>
+
+<!-- hidden processing canvas -->
+<canvas id="proc-canvas" width="280" height="420" style="display:none"></canvas>
+
+<script>
+// ═══════════════════════════════════════════════════════
+//  CONFIG
+// ═══════════════════════════════════════════════════════
+const W = 280, H = 420;
+
+// Portrait – Mona Lisa (public domain, Wikimedia Commons)
+const PORTRAIT_SRC =
+  'https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/' +
+  'Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg/402px-' +
+  'Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg';
+
+const CHARACTER = 'Mona Lisa';
+const COMPLIMENT = [
+  `😱 Ôi trời ơi! Bạn có thật là <b>${CHARACTER}</b> không vậy?!`,
+  `🌟 Nụ cười huyền bí ấy… đích thực là của bạn!`,
+  `🎨 Phải chăng Leonardo da Vinci đã vẽ bạn từ 500 năm trước?!`,
+];
+
+// Hole: fraction of W×H
+//   covers nose+mouth of Mona Lisa as displayed at 280×420
+const HOLE_XF = 0.26, HOLE_YF = 0.33;
+const HOLE_WF = 0.48, HOLE_HF = 0.24;
+
+// Alignment
+const TOLERANCE_F = 0.30;   // fraction of hole width = tolerance radius
+const BUFFER_SIZE  = 40;    // frames to average
+const WIN_THRESH   = 0.78;
+
+// ═══════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════
+let portrait = new Image();
+portrait.crossOrigin = 'anonymous';
+
+let hole = {};          // computed pixel coords
+let stream = null;
+let detecting = false;
+let winDone = false;
+let alignBuf = [];
+let detectTimer = null;
+let guideRAF = null;
+
+// ═══════════════════════════════════════════════════════
+//  ELEMENTS
+// ═══════════════════════════════════════════════════════
+const $ = id => document.getElementById(id);
+const loadingScreen = $('loading-screen');
+const introScreen   = $('intro-screen');
+const gameScreen    = $('game-screen');
+const winScreen     = $('win-screen');
+const video         = $('webcam-video');
+const pCanvas       = $('portrait-canvas');
+const gCanvas       = $('guide-canvas');
+const procCanvas    = $('proc-canvas');
+const winCanvas     = $('win-canvas');
+const prevCanvas    = $('preview-canvas');
+const progressFill  = $('progress-fill');
+const statusText    = $('status-text');
+const winMsg        = $('win-msg');
+
+const pCtx    = pCanvas.getContext('2d');
+const gCtx    = gCanvas.getContext('2d');
+const procCtx = procCanvas.getContext('2d');
+const winCtx  = winCanvas.getContext('2d');
+const prevCtx = prevCanvas.getContext('2d');
+
+// ═══════════════════════════════════════════════════════
+//  HOLE GEOMETRY
+// ═══════════════════════════════════════════════════════
+function computeHole() {
+  hole.x = Math.round(HOLE_XF * W);
+  hole.y = Math.round(HOLE_YF * H);
+  hole.w = Math.round(HOLE_WF * W);
+  hole.h = Math.round(HOLE_HF * H);
+  hole.cx = hole.x + hole.w / 2;
+  hole.cy = hole.y + hole.h / 2;
+  // nose target: upper 30 % of hole
+  hole.noseTgt = { x: hole.cx, y: hole.y + hole.h * 0.30 };
+  // mouth target: lower 70 % of hole
+  hole.mouthTgt = { x: hole.cx, y: hole.y + hole.h * 0.72 };
+  hole.tol = hole.w * TOLERANCE_F;
+}
+
+// ═══════════════════════════════════════════════════════
+//  DRAW PORTRAIT + HOLE
+// ═══════════════════════════════════════════════════════
+function roundRectPath(ctx, x, y, w, h, r = 8) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+
+function drawPortraitWithHole(ctx, cw, ch, withHole = true) {
+  ctx.clearRect(0, 0, cw, ch);
+  if (portrait.complete && portrait.naturalWidth > 0) {
+    ctx.drawImage(portrait, 0, 0, cw, ch);
+  } else {
+    ctx.fillStyle = '#2a1a0a';
+    ctx.fillRect(0, 0, cw, ch);
+  }
+
+  if (!withHole) return;
+
+  // Scale hole for any canvas size
+  const sx = cw / W, sy = ch / H;
+  const hx = hole.x * sx, hy = hole.y * sy;
+  const hw = hole.w * sx, hh = hole.h * sy;
+
+  // Punch hole (destination-out)
+  ctx.save();
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.fillStyle = 'black';
+  roundRectPath(ctx, hx, hy, hw, hh, 8 * sx);
+  ctx.fill();
+  ctx.restore();
+
+  // Gold glowing border
+  ctx.save();
+  ctx.strokeStyle = 'rgba(240,192,64,.9)';
+  ctx.lineWidth = 2.5;
+  ctx.shadowColor = '#f0c040';
+  ctx.shadowBlur = 12;
+  roundRectPath(ctx, hx, hy, hw, hh, 8 * sx);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════
+//  GUIDE CANVAS (alignment feedback)
+// ═══════════════════════════════════════════════════════
+let guidePhase = 0;
+
+function drawGuide(nosePos, mouthPos, noseOk, mouthOk, noFace) {
+  gCtx.clearRect(0, 0, W, H);
+
+  const now = Date.now();
+  const pulse = 0.5 + 0.5 * Math.sin(now / 400);
+
+  function crosshair(x, y, ok) {
+    const col = ok ? `rgba(80,255,80,${.7 + .3 * pulse})` : `rgba(240,192,64,${.5 + .4 * pulse})`;
+    gCtx.save();
+    gCtx.strokeStyle = col;
+    gCtx.lineWidth = 1.8;
+    gCtx.shadowColor = ok ? '#80ff80' : '#f0c040';
+    gCtx.shadowBlur = ok ? 12 : 8;
+    // circle
+    gCtx.beginPath();
+    gCtx.arc(x, y, 7, 0, Math.PI * 2);
+    gCtx.stroke();
+    // tick marks
+    gCtx.beginPath();
+    [[-14,-12],[-12,-14],[12,-14],[14,-12],[14,12],[12,14],[-12,14],[-14,12]]
+      .forEach(([dx,dy],i) => { if (i%2===0) gCtx.moveTo(x+dx,y+dy); else gCtx.lineTo(x+dx,y+dy); });
+    gCtx.stroke();
+    gCtx.restore();
+  }
+
+  // Always show targets
+  crosshair(hole.noseTgt.x, hole.noseTgt.y, noseOk);
+  crosshair(hole.mouthTgt.x, hole.mouthTgt.y, mouthOk);
+
+  if (!noFace) {
+    // Detected dots
+    function detDot(pos, ok) {
+      if (!pos) return;
+      gCtx.save();
+      gCtx.beginPath();
+      gCtx.arc(pos.x, pos.y, 5, 0, Math.PI * 2);
+      gCtx.fillStyle = ok ? 'rgba(80,255,80,.85)' : 'rgba(255,80,80,.75)';
+      gCtx.shadowColor = ok ? '#80ff80' : '#ff5050';
+      gCtx.shadowBlur = 10;
+      gCtx.fill();
+      gCtx.restore();
+    }
+    detDot(nosePos, noseOk);
+    detDot(mouthPos, mouthOk);
+
+    // Lock-on frame when both aligned
+    if (noseOk && mouthOk) {
+      const a = .5 + .5 * pulse;
+      gCtx.save();
+      gCtx.strokeStyle = `rgba(80,255,80,${a})`;
+      gCtx.lineWidth = 3;
+      gCtx.shadowColor = '#80ff80';
+      gCtx.shadowBlur = 18;
+      roundRectPath(gCtx, hole.x + 3, hole.y + 3, hole.w - 6, hole.h - 6, 7);
+      gCtx.stroke();
+      gCtx.restore();
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  FACE DETECTION LOOP
+// ═══════════════════════════════════════════════════════
+async function detect() {
+  if (!detecting || winDone) return;
+
+  // Draw mirrored video to proc canvas
+  procCtx.save();
+  procCtx.translate(W, 0);
+  procCtx.scale(-1, 1);
+  procCtx.drawImage(video, 0, 0, W, H);
+  procCtx.restore();
+
+  try {
+    const det = await faceapi
+      .detectSingleFace(procCanvas, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.35 }))
+      .withFaceLandmarks(true);
+
+    if (!det) {
+      drawGuide(null, null, false, false, true);
+      pushBuf(0);
+      statusText.textContent = '👆 Di chuyển mặt vào ô trống…';
+      return;
+    }
+
+    const pts = det.landmarks.positions;
+    // 68-pt model: nose tip = 30, mouth corners = 48,54, mouth top/bottom = 51,57
+    const nose  = pts[30];
+    const mouthC = {
+      x: (pts[48].x + pts[54].x) / 2,
+      y: (pts[51].y + pts[57].y) / 2,
+    };
+
+    const nd = dist(nose,    hole.noseTgt);
+    const md = dist(mouthC,  hole.mouthTgt);
+    const nOk = nd < hole.tol;
+    const mOk = md < hole.tol;
+
+    drawGuide(nose, mouthC, nOk, mOk, false);
+
+    const frameScore = scoreOf(nd) * 0.5 + scoreOf(md) * 0.5;
+    pushBuf(frameScore);
+
+    const avg = alignBuf.reduce((a,b) => a+b, 0) / alignBuf.length;
+    setProgress(avg);
+
+    if (nOk && mOk)          statusText.textContent = '🎯 Giữ nguyên…';
+    else if (nOk || mOk)     statusText.textContent = '📐 Gần rồi! Điều chỉnh thêm';
+    else                     statusText.textContent = '👆 Di chuyển mặt vào ô trống…';
+
+    if (avg >= WIN_THRESH && alignBuf.length >= BUFFER_SIZE * 0.85) {
+      triggerWin();
+    }
+  } catch(e) { /* ignore frame errors */ }
+}
+
+function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+function scoreOf(d) { return Math.max(0, 1 - d / (hole.tol * 2.5)); }
+
+function pushBuf(v) {
+  alignBuf.push(v);
+  if (alignBuf.length > BUFFER_SIZE) alignBuf.shift();
+}
+
+function setProgress(frac) {
+  const pct = Math.min(100, frac * 100);
+  progressFill.style.width = pct + '%';
+}
+
+// ═══════════════════════════════════════════════════════
+//  WIN SEQUENCE
+// ═══════════════════════════════════════════════════════
+async function triggerWin() {
+  if (winDone) return;
+  winDone = true;
+  detecting = false;
+  clearInterval(detectTimer);
+  cancelAnimationFrame(guideRAF);
+
+  // Freeze face frame
+  const frozen = document.createElement('canvas');
+  frozen.width = W; frozen.height = H;
+  const fCtx = frozen.getContext('2d');
+  fCtx.save();
+  fCtx.translate(W, 0);
+  fCtx.scale(-1, 1);
+  fCtx.drawImage(video, 0, 0, W, H);
+  fCtx.restore();
+
+  // Stop camera
+  if (stream) stream.getTracks().forEach(t => t.stop());
+
+  gameScreen.classList.add('hidden');
+  winScreen.classList.remove('hidden');
+
+  await sleep(80);
+  await animateReveal(frozen);
+}
+
+async function animateReveal(frozen) {
+  const STEPS = 45;
+
+  // --- Phase 1: sparkle burst ---
+  spawnSparks(30, winCanvas);
+  await sleep(250);
+
+  // --- Phase 2: transition frozen face → portrait pixels in hole ---
+  for (let i = 0; i <= STEPS; i++) {
+    const t = easeInOut(i / STEPS);
+
+    winCtx.clearRect(0, 0, W, H);
+    winCtx.drawImage(portrait, 0, 0, W, H);   // full portrait
+
+    // Frozen face fades out of hole
+    const fadeAlpha = Math.max(0, 1 - t * 1.5);
+    if (fadeAlpha > 0) {
+      winCtx.save();
+      winCtx.globalAlpha = fadeAlpha;
+      winCtx.drawImage(frozen,
+        hole.x, hole.y, hole.w, hole.h,
+        hole.x, hole.y, hole.w, hole.h);
+      winCtx.restore();
+    }
+
+    // Sparkle shimmer fills hole
+    if (t > 0.3) {
+      const shimA = Math.min(1, (t - 0.3) / 0.5) * 0.55;
+      winCtx.save();
+      const grad = winCtx.createRadialGradient(
+        hole.cx, hole.cy, 0,
+        hole.cx, hole.cy, hole.w * 0.6);
+      grad.addColorStop(0, `rgba(255,230,100,${shimA})`);
+      grad.addColorStop(1, `rgba(240,100,20,0)`);
+      winCtx.fillStyle = grad;
+      roundRectPath(winCtx, hole.x, hole.y, hole.w, hole.h, 8);
+      winCtx.fill();
+      winCtx.restore();
+    }
+
+    if (i % 6 === 0) spawnSparks(4, winCanvas);
+    await sleep(24);
+  }
+
+  // --- Final: clean full portrait ---
+  winCtx.clearRect(0, 0, W, H);
+  winCtx.drawImage(portrait, 0, 0, W, H);
+
+  // Subtle golden veil
+  winCtx.save();
+  winCtx.globalAlpha = 0.12;
+  winCtx.fillStyle = '#f0c040';
+  winCtx.fillRect(0, 0, W, H);
+  winCtx.restore();
+
+  // --- Phase 3: confetti shower ---
+  spawnSparks(60, winCanvas);
+
+  // --- Message ---
+  await sleep(350);
+  const msgs = COMPLIMENT;
+  winMsg.innerHTML = msgs[0] + '<br>' +
+    `<span style="font-size:.8em;color:rgba(255,220,80,.85)">${msgs[1]}</span>` + '<br>' +
+    `<span style="font-size:.72em;color:rgba(255,200,60,.7)">${msgs[2]}</span>`;
+
+  // More fireworks
+  for (let i = 0; i < 4; i++) {
+    await sleep(300);
+    spawnSparks(20, winCanvas);
+  }
+}
+
+function easeInOut(t) { return t < .5 ? 2*t*t : -1+(4-2*t)*t; }
+
+// ═══════════════════════════════════════════════════════
+//  PARTICLES
+// ═══════════════════════════════════════════════════════
+const COLORS = ['#f0c040','#ff6b6b','#6bdcff','#c040f0','#40ff90','#fff','#ffa040','#ff40a0'];
+
+function spawnSparks(n, anchorEl) {
+  const rect = anchorEl.getBoundingClientRect();
+  const cx = rect.left + rect.width  / 2 + window.scrollX;
+  const cy = rect.top  + rect.height / 2 + window.scrollY;
+
+  for (let i = 0; i < n; i++) {
+    const el = document.createElement('div');
+    el.className = 'spark';
+    const size = 5 + Math.random() * 9;
+    const angle = Math.random() * Math.PI * 2;
+    const radius = 60 + Math.random() * 250;
+    const tx = Math.cos(angle) * radius + 'px';
+    const ty = (Math.sin(angle) * radius - 80 - Math.random() * 120) + 'px';
+    const dur = 0.8 + Math.random() * 1.2;
+
+    Object.assign(el.style, {
+      left:     (cx + (Math.random() - .5) * 280) + 'px',
+      top:      (cy + (Math.random() - .5) * 180) + 'px',
+      width:    size + 'px',
+      height:   size + 'px',
+      background: COLORS[Math.floor(Math.random() * COLORS.length)],
+      '--tx':   tx,
+      '--ty':   ty,
+      animationDuration: dur + 's',
+      animationDelay:    (Math.random() * .25) + 's',
+    });
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), (dur + .25) * 1000 + 300);
+  }
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ═══════════════════════════════════════════════════════
+//  STARFIELD
+// ═══════════════════════════════════════════════════════
+function initStars() {
+  const c = $('starfield');
+  c.width  = window.innerWidth;
+  c.height = window.innerHeight;
+  const ctx = c.getContext('2d');
+  const stars = Array.from({length: 160}, () => ({
+    x: Math.random() * c.width,
+    y: Math.random() * c.height,
+    r: Math.random() * 1.6 + .2,
+    s: Math.random() * Math.PI * 2,
+    speed: .003 + Math.random() * .008,
+  }));
+  function draw() {
+    ctx.clearRect(0, 0, c.width, c.height);
+    stars.forEach(s => {
+      const alpha = .3 + .7 * (0.5 + 0.5 * Math.sin(s.s));
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255,255,220,${alpha})`;
+      ctx.fill();
+      s.s += s.speed;
+    });
+    requestAnimationFrame(draw);
+  }
+  draw();
+  window.addEventListener('resize', () => { c.width = window.innerWidth; c.height = window.innerHeight; });
+}
+
+// ═══════════════════════════════════════════════════════
+//  GUIDE ANIMATION LOOP (while game active)
+// ═══════════════════════════════════════════════════════
+function guideLoop() {
+  if (!detecting) return;
+  // Redraw portrait hole each frame (guide animations need fresh portrait)
+  drawPortraitWithHole(pCtx, W, H, true);
+  guideRAF = requestAnimationFrame(guideLoop);
+}
+
+// ═══════════════════════════════════════════════════════
+//  START GAME
+// ═══════════════════════════════════════════════════════
+async function startGame() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+    });
+    video.srcObject = stream;
+    await new Promise(r => { video.onloadedmetadata = r; });
+    await video.play();
+  } catch(e) {
+    alert('Không thể truy cập camera 😢\n' + e.message);
+    return;
+  }
+
+  // Reset
+  winDone    = false;
+  detecting  = false;
+  alignBuf   = [];
+  progressFill.style.width = '0%';
+  statusText.textContent   = '👆 Di chuyển mặt vào ô trống…';
+
+  introScreen.classList.add('hidden');
+  winScreen.classList.add('hidden');
+  gameScreen.classList.remove('hidden');
+
+  drawPortraitWithHole(pCtx, W, H, true);
+
+  // Start loops
+  detecting = true;
+  guideLoop();
+  detectTimer = setInterval(detect, 110);   // ~9 fps detection
+}
+
+// ═══════════════════════════════════════════════════════
+//  SETUP / BOOT
+// ═══════════════════════════════════════════════════════
+async function boot() {
+  initStars();
+  computeHole();
+
+  // 1. Load portrait image
+  $('load-text').textContent = 'Đang tải chân dung huyền bí… 🖼️';
+  await new Promise((res, rej) => {
+    portrait.onload  = res;
+    portrait.onerror = rej;
+    portrait.src = PORTRAIT_SRC;
+  });
+
+  // 2. Load AI face models
+  $('load-text').textContent = 'Đang nạp trí tuệ nhân tạo… 🤖';
+  const MODEL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
+  await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL);
+  await faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL);
+
+  // 3. Draw intro preview
+  drawPortraitWithHole(prevCtx, 140, 210, true);
+
+  // 4. Hide loader, show intro
+  loadingScreen.classList.add('hidden');
+  introScreen.classList.remove('hidden');
+}
+
+// ═══════════════════════════════════════════════════════
+//  EVENT LISTENERS
+// ═══════════════════════════════════════════════════════
+$('start-btn').addEventListener('click', startGame);
+$('again-btn').addEventListener('click', () => {
+  winScreen.classList.add('hidden');
+  introScreen.classList.remove('hidden');
+});
+
+// ═══════════════════════════════════════════════════════
+//  BOOT
+// ═══════════════════════════════════════════════════════
+boot().catch(err => {
+  loadingScreen.innerHTML = `
+    <p style="color:#ff8080;font-size:1.1em">Lỗi tải game 😢</p>
+    <p style="color:rgba(255,255,255,.5);font-size:.8em;margin-top:8px">${err.message}</p>
+    <button onclick="location.reload()" class="btn btn-gold" style="margin-top:20px">🔄 Thử lại</button>`;
+});
+</script>
+</body>
+</html>
