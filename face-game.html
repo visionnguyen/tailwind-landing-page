@@ -332,9 +332,23 @@ let HOLE_HF    = 0.085;
 let NOSE_IN_H  = 0.30;
 let MOUTH_IN_H = 0.72;
 
-const TOLERANCE_F = 0.30;  // alignment tolerance as fraction of hole.w
-const BUFFER_SIZE = 50;    // ~5.5 s at 110 ms/frame
-const WIN_THRESH  = 0.80;  // product score needed (≈ both individually ≥ 89 %)
+const TOLERANCE_F = 0.30;
+const BUFFER_SIZE = 50;
+const WIN_THRESH  = 0.80;
+
+// 7 landmark targets within the hole (rx/ry in 0..1 hole-local space)
+// Order: [noseTip, noseL, noseR, mouthL, mouthR, lipTop, lipBot]
+// Landmark indices: pts[30, 31, 35, 48, 54, 51, 57]
+const DEFAULT_TARGETS = [
+  { rx: 0.50, ry: 0.30 },  // nose tip
+  { rx: 0.38, ry: 0.42 },  // left nostril
+  { rx: 0.62, ry: 0.42 },  // right nostril
+  { rx: 0.25, ry: 0.72 },  // left mouth corner
+  { rx: 0.75, ry: 0.72 },  // right mouth corner
+  { rx: 0.50, ry: 0.62 },  // top lip center
+  { rx: 0.50, ry: 0.84 },  // bottom lip center
+];
+let holeTargets = DEFAULT_TARGETS.map(t => ({ ...t }));
 
 // ═══════════════════════════════════════════════════════
 //  ELEMENTS
@@ -394,8 +408,17 @@ function computeHole() {
   hole.h  = HOLE_HF * imgNH * s;
   hole.cx = hole.x + hole.w / 2;
   hole.cy = hole.y + hole.h / 2;
-  hole.noseTgt  = { x: hole.cx, y: hole.y + hole.h * NOSE_IN_H  };
-  hole.mouthTgt = { x: hole.cx, y: hole.y + hole.h * MOUTH_IN_H };
+  // 7 screen-space targets derived from holeTargets fractions
+  hole.targets = holeTargets.map(t => ({
+    x: hole.x + hole.w * t.rx,
+    y: hole.y + hole.h * t.ry,
+  }));
+  // noseTgt / mouthTgt kept for scale-check compatibility
+  hole.noseTgt  = hole.targets[0];
+  hole.mouthTgt = {
+    x: (hole.targets[3].x + hole.targets[4].x) / 2,
+    y: (hole.targets[5].y + hole.targets[6].y) / 2,
+  };
   hole.tol = hole.w * TOLERANCE_F;
 }
 
@@ -433,6 +456,17 @@ async function calibrateHole() {
     HOLE_HF    = hh / imgNH;
     NOSE_IN_H  = (noseTip.y              - hy) / hh;
     MOUTH_IN_H = ((lipTop.y + lipBot.y) / 2 - hy) / hh;
+
+    // Store precise portrait landmark positions as hole-local fractions
+    holeTargets = [
+      { rx: (noseTip.x - hx) / hw, ry: (noseTip.y - hy) / hh },
+      { rx: (noseL.x   - hx) / hw, ry: (noseL.y   - hy) / hh },
+      { rx: (noseR.x   - hx) / hw, ry: (noseR.y   - hy) / hh },
+      { rx: (mouthL.x  - hx) / hw, ry: (mouthL.y  - hy) / hh },
+      { rx: (mouthR.x  - hx) / hw, ry: (mouthR.y  - hy) / hh },
+      { rx: (lipTop.x  - hx) / hw, ry: (lipTop.y  - hy) / hh },
+      { rx: (lipBot.x  - hx) / hw, ry: (lipBot.y  - hy) / hh },
+    ];
 
     computeHole();
     drawPortraitWithHole(pCtx, pCanvas.width, pCanvas.height);
@@ -589,39 +623,82 @@ function _fallbackAt402x602(ctx) {
 // ═══════════════════════════════════════════════════════
 //  GUIDE OVERLAY
 // ═══════════════════════════════════════════════════════
-function drawGuide(nosePos, mouthPos, nOk, mOk, noFace) {
+// drawGuide(playerPts, scores, noFace)
+//   playerPts : array of 7 {x,y} — null when no face
+//   scores    : array of 7 alignment scores 0..1
+//   noFace    : true → skip player dots / skeleton
+function drawGuide(playerPts, scores, noFace) {
   gCtx.clearRect(0, 0, gCanvas.width, gCanvas.height);
   const pulse = .5 + .5 * Math.sin(Date.now() / 380);
 
-  function crosshair(x, y, ok) {
-    const col = ok ? `rgba(80,255,80,${.6+.4*pulse})` : `rgba(240,192,64,${.45+.45*pulse})`;
-    gCtx.save();
-    gCtx.strokeStyle = col; gCtx.lineWidth = 2;
-    gCtx.shadowColor = ok ? '#80ff80' : '#f0c040';
-    gCtx.shadowBlur  = ok ? 16 : 10;
-    gCtx.beginPath(); gCtx.arc(x, y, 9, 0, Math.PI*2); gCtx.stroke();
-    gCtx.beginPath();
-    [[-18,-15],[-14,-19],[14,-19],[18,-15],[18,15],[14,19],[-14,19],[-18,15]]
-      .forEach(([dx,dy],i) => { if(i%2===0) gCtx.moveTo(x+dx,y+dy); else gCtx.lineTo(x+dx,y+dy); });
-    gCtx.stroke();
-    gCtx.restore();
+  // Per-score color: green (s=1) → gold → red (s=0)
+  function scoreColor(s, alpha) {
+    const r = Math.round(80  + 175 * (1 - s));
+    const g = Math.round(255 - 155 * (1 - s));
+    const b = Math.round(80  * s);
+    return `rgba(${r},${g},${b},${alpha})`;
   }
 
-  crosshair(hole.noseTgt.x, hole.noseTgt.y, nOk);
-  crosshair(hole.mouthTgt.x, hole.mouthTgt.y, mOk);
+  const T = hole.targets;  // 7 screen-space targets
 
-  if (!noFace) {
-    const dot = (pos, ok) => {
-      if (!pos) return;
-      gCtx.save();
-      gCtx.beginPath(); gCtx.arc(pos.x, pos.y, 6, 0, Math.PI*2);
-      gCtx.fillStyle   = ok ? 'rgba(80,255,80,.88)' : 'rgba(255,70,70,.78)';
-      gCtx.shadowColor = ok ? '#80ff80' : '#ff4646'; gCtx.shadowBlur = 12;
+  // ── Target skeleton (always shown) ─────────────────────────────────────────
+  function skelLine(a, b, col) {
+    gCtx.save(); gCtx.strokeStyle = col; gCtx.lineWidth = 1.4;
+    gCtx.setLineDash([4, 5]); gCtx.globalAlpha = 0.55;
+    gCtx.shadowColor = col; gCtx.shadowBlur = 6;
+    gCtx.beginPath(); gCtx.moveTo(a.x, a.y); gCtx.lineTo(b.x, b.y); gCtx.stroke();
+    gCtx.setLineDash([]); gCtx.restore();
+  }
+  const avgNose  = scores ? (scores[0]+scores[1]+scores[2])/3 : 0.5;
+  const avgMouth = scores ? (scores[3]+scores[4]+scores[5]+scores[6])/4 : 0.5;
+  const nCol = scoreColor(avgNose,  1);
+  const mCol = scoreColor(avgMouth, 1);
+  // Nose triangle
+  skelLine(T[0], T[1], nCol); skelLine(T[0], T[2], nCol); skelLine(T[1], T[2], nCol);
+  // Mouth outline
+  skelLine(T[3], T[5], mCol); skelLine(T[5], T[4], mCol);
+  skelLine(T[3], T[6], mCol); skelLine(T[6], T[4], mCol);
+
+  // ── Target crosshairs ──────────────────────────────────────────────────────
+  function crosshair(x, y, s) {
+    const col = scoreColor(s, .55 + .45 * pulse);
+    gCtx.save(); gCtx.strokeStyle = col; gCtx.lineWidth = 1.8;
+    gCtx.shadowColor = col; gCtx.shadowBlur = 9;
+    gCtx.beginPath(); gCtx.arc(x, y, 8, 0, Math.PI*2); gCtx.stroke();
+    gCtx.beginPath();
+    [[-15,-12],[-11,-16],[11,-16],[15,-12],[15,12],[11,16],[-11,16],[-15,12]]
+      .forEach(([dx,dy],i) => { if(i%2===0) gCtx.moveTo(x+dx,y+dy); else gCtx.lineTo(x+dx,y+dy); });
+    gCtx.stroke(); gCtx.restore();
+  }
+  T.forEach((t, i) => crosshair(t.x, t.y, scores ? scores[i] : 0.5));
+
+  // ── Player landmarks + skeleton (when face detected and size OK) ───────────
+  if (playerPts && !noFace) {
+    // Player skeleton
+    const pAvgNose  = (scores[0]+scores[1]+scores[2])/3;
+    const pAvgMouth = (scores[3]+scores[4]+scores[5]+scores[6])/4;
+    function pSkelLine(a, b, col) {
+      gCtx.save(); gCtx.strokeStyle = col; gCtx.lineWidth = 1.2;
+      gCtx.setLineDash([3, 4]); gCtx.globalAlpha = 0.50;
+      gCtx.beginPath(); gCtx.moveTo(a.x, a.y); gCtx.lineTo(b.x, b.y); gCtx.stroke();
+      gCtx.setLineDash([]); gCtx.restore();
+    }
+    const pNC = scoreColor(pAvgNose, 1), pMC = scoreColor(pAvgMouth, 1);
+    pSkelLine(playerPts[0], playerPts[1], pNC); pSkelLine(playerPts[0], playerPts[2], pNC);
+    pSkelLine(playerPts[1], playerPts[2], pNC);
+    pSkelLine(playerPts[3], playerPts[5], pMC); pSkelLine(playerPts[5], playerPts[4], pMC);
+    pSkelLine(playerPts[3], playerPts[6], pMC); pSkelLine(playerPts[6], playerPts[4], pMC);
+
+    // Player dots
+    playerPts.forEach((p, i) => {
+      const col = scoreColor(scores[i], 0.90);
+      gCtx.save(); gCtx.beginPath(); gCtx.arc(p.x, p.y, 6, 0, Math.PI*2);
+      gCtx.fillStyle = col; gCtx.shadowColor = col; gCtx.shadowBlur = 12;
       gCtx.fill(); gCtx.restore();
-    };
-    dot(nosePos, nOk); dot(mouthPos, mOk);
+    });
 
-    if (nOk && mOk) {
+    // Green hole outline when all 7 roughly aligned
+    if (scores.every(s => s > 0.50)) {
       gCtx.save();
       gCtx.strokeStyle = `rgba(80,255,80,${.4+.6*pulse})`;
       gCtx.lineWidth = 3.5; gCtx.shadowColor = '#80ff80'; gCtx.shadowBlur = 24;
@@ -649,51 +726,56 @@ async function detect() {
       .withFaceLandmarks(true);
 
     if (!det) {
-      drawGuide(null, null, false, false, true);
+      drawGuide(null, null, true);
       push(0); setProgress(avg());
       statusText.textContent = '👆 Di chuyển mặt vào ô vàng…';
       return;
     }
 
-    const pts      = det.landmarks.positions;
-    const nosePos  = pts[30];
-    const mouthPos = { x:(pts[48].x+pts[54].x)/2, y:(pts[51].y+pts[57].y)/2 };
+    const pts = det.landmarks.positions;
+    // 7 player landmarks: [noseTip, noseL, noseR, mouthL, mouthR, lipTop, lipBot]
+    const playerPts = [pts[30], pts[31], pts[35], pts[48], pts[54], pts[51], pts[57]];
 
-    // ── Scale check ──────────────────────────────────────────────────────────
-    // Player's vertical nose-tip→mouth-center span must match the portrait's
-    // same span inside the hole.  Too small = person standing too far away;
-    // the composite would look bad because the face wouldn't fill the hole.
-    const playerSpanV = mouthPos.y - nosePos.y;
-    const targetSpanV = hole.h * (MOUTH_IN_H - NOSE_IN_H); // portrait's nose→mouth in hole
-    const scaleRatio  = playerSpanV / targetSpanV;          // 1.0 = perfect fill
-    const sizeOk      = scaleRatio >= 0.60 && scaleRatio <= 1.80;
+    // ── Scale check ───────────────────────────────────────────────────────────
+    const playerSpanV = playerPts[0].y - playerPts[6].y;  // nose tip to bottom lip (signed ok)
+    const targetSpanV = hole.noseTgt.y  - hole.targets[6].y;
+    const scaleRatio  = Math.abs(playerSpanV) / Math.abs(targetSpanV || 1);
+    // Simpler direct vertical span: nose tip y → mouth center y
+    const pSpanV2 = (playerPts[5].y + playerPts[6].y)/2 - playerPts[0].y;
+    const tSpanV2 = hole.mouthTgt.y - hole.noseTgt.y;
+    const sRatio  = pSpanV2 / (tSpanV2 || 1);
+    const sizeOk  = sRatio >= 0.55 && sRatio <= 1.90;
 
-    const nd  = dist(nosePos,  hole.noseTgt);
-    const md  = dist(mouthPos, hole.mouthTgt);
-    const nOk = nd < hole.tol;
-    const mOk = md < hole.tol;
+    // Per-landmark scores (computed before drawGuide so guide shows color even on size-fail)
+    const dists  = playerPts.map((p, i) => dist(p, hole.targets[i]));
+    const scores = dists.map(d => sc(d));
 
-    drawGuide(nosePos, mouthPos, nOk, mOk, false);
+    drawGuide(playerPts, scores, !sizeOk);
 
     if (!sizeOk) {
       push(0); setProgress(avg());
-      statusText.textContent = scaleRatio < 0.60
+      statusText.textContent = sRatio < 0.55
         ? '📏 Lại gần hơn — mặt còn quá nhỏ!'
         : '📏 Lùi ra xa hơn — mặt quá to!';
       return;
     }
 
-    // product score: both must be aligned; one off drags score down hard
-    push(sc(nd) * sc(md));
-    const a = avg();
-    setProgress(a);
+    // Weighted geometric mean over 7 landmarks
+    // Weights: structural anchors (noseTip, mouth corners) = 1.5; lip centers = 1.0; nostrils = 0.75
+    // W_SUM = 1.5+0.75+0.75+1.5+1.5+1.0+1.0 = 8.0
+    const W = [1.5, 0.75, 0.75, 1.5, 1.5, 1.0, 1.0];
+    let logSum = 0;
+    for (let i = 0; i < 7; i++) logSum += W[i] * Math.log(Math.max(scores[i], 1e-6));
+    push(Math.exp(logSum / 8.0));
 
+    const a = avg(); setProgress(a);
+    const nOk = dists[0] < hole.tol;
+    const mOk = dists[3] < hole.tol && dists[4] < hole.tol;
     statusText.textContent =
       nOk && mOk ? '🎯 Giữ nguyên…' :
       nOk || mOk ? '📐 Gần rồi! Điều chỉnh thêm' :
                    '👆 Di chuyển mặt vào ô vàng…';
 
-    // require rolling average + last 8 frames all individually above floor
     const streak = alignBuf.slice(-8).every(v => v >= 0.55);
     if (a >= WIN_THRESH && alignBuf.length >= Math.floor(BUFFER_SIZE*.85) && streak) triggerWin();
   } catch (_) {}
@@ -740,40 +822,54 @@ async function triggerWin() {
 
 async function animateReveal(frozen) {
   const CW = winCanvas.width, CH = winCanvas.height;
+
+  // Build the composite (portrait + styled player face) before animation starts
+  const composite = buildComposite(frozen, CW, CH);
+
   spawnSparks(40); await sleep(260);
 
-  const STEPS = 50;
+  // Phase: portrait-with-hole fades out, composite fades in (60 frames × 20ms = 1.2 s)
+  const STEPS = 60;
   for (let i = 0; i <= STEPS; i++) {
-    const t = eio(i/STEPS);
-    winCtx.clearRect(0,0,CW,CH);
-    drawPortraitLayer(winCtx, CW, CH);          // full portrait, NO hole
+    const t = eio(i / STEPS);
+    winCtx.clearRect(0, 0, CW, CH);
 
-    // Frozen face dissolves out of hole area
-    const fα = Math.max(0, 1-t*1.5);
-    if (fα > 0) {
-      winCtx.save(); winCtx.globalAlpha = fα;
-      winCtx.drawImage(frozen, hole.x,hole.y,hole.w,hole.h, hole.x,hole.y,hole.w,hole.h);
+    // Portrait+hole recedes
+    const hα = Math.max(0, 1 - t * 1.2);
+    if (hα > 0) {
+      winCtx.save(); winCtx.globalAlpha = hα;
+      drawPortraitWithHole(winCtx, CW, CH);
       winCtx.restore();
     }
-    // Golden shimmer fills the hole region
-    if (t > 0.2) {
-      const sα = Math.min(1,(t-.2)/.55) * .6;
+
+    // Composite rises
+    if (t > 0.10) {
+      winCtx.save(); winCtx.globalAlpha = Math.min(1, (t - 0.10) / 0.70);
+      winCtx.drawImage(composite, 0, 0);
+      winCtx.restore();
+    }
+
+    // Golden shimmer pulse at seam (active t 0.25→0.90)
+    if (t > 0.25 && t < 0.90) {
+      const sP  = (t - 0.25) / 0.65;
+      const sα  = Math.sin(sP * Math.PI) * 0.55;
       winCtx.save();
-      const g = winCtx.createRadialGradient(hole.cx,hole.cy,0, hole.cx,hole.cy,hole.w*.7);
-      g.addColorStop(0,`rgba(255,230,100,${sα})`); g.addColorStop(1,'rgba(240,100,20,0)');
+      const g = winCtx.createRadialGradient(hole.cx, hole.cy, hole.w*0.10, hole.cx, hole.cy, hole.w*0.78);
+      g.addColorStop(0,   `rgba(255,230,100,${sα})`);
+      g.addColorStop(0.5, `rgba(240,160,20,${sα*0.45})`);
+      g.addColorStop(1,   'rgba(240,100,20,0)');
       winCtx.fillStyle = g;
-      rrPath(winCtx, hole.x,hole.y,hole.w,hole.h);
+      rrPath(winCtx, hole.x-6, hole.y-6, hole.w+12, hole.h+12, 14);
       winCtx.fill(); winCtx.restore();
     }
-    if (i%6===0) spawnSparks(5);
+
+    if (i % 7 === 0) spawnSparks(5);
     await sleep(20);
   }
 
-  // Final: clean full portrait + subtle gold veil
-  winCtx.clearRect(0,0,CW,CH);
-  drawPortraitLayer(winCtx, CW, CH);
-  winCtx.save(); winCtx.globalAlpha = .1; winCtx.fillStyle = '#f0c040';
-  winCtx.fillRect(0,0,CW,CH); winCtx.restore();
+  // Final frame: pure composite — persists for screenshot
+  winCtx.clearRect(0, 0, CW, CH);
+  winCtx.drawImage(composite, 0, 0);
 
   spawnSparks(60);
   await sleep(300);
@@ -786,7 +882,77 @@ async function animateReveal(frozen) {
   $('win-msg-wrap').classList.remove('hidden');
   $('again-wrap').classList.remove('hidden');
 
-  for (let i=0; i<4; i++) { await sleep(350); spawnSparks(22); }
+  for (let i = 0; i < 4; i++) { await sleep(350); spawnSparks(22); }
+}
+
+// Build the portrait composite: full portrait with the player's color-graded,
+// feather-masked face blended seamlessly into the hole region.
+function buildComposite(frozen, CW, CH) {
+  // ── 1. Result canvas: full portrait, no hole ────────────────────────────────
+  const cCanvas = document.createElement('canvas');
+  cCanvas.width = CW; cCanvas.height = CH;
+  const cCtx = cCanvas.getContext('2d');
+  drawPortraitLayer(cCtx, CW, CH);
+
+  // ── 2. Extract hole patch with padding ──────────────────────────────────────
+  const PAD = 14;
+  const sx  = Math.max(0, Math.floor(hole.x - PAD));
+  const sy  = Math.max(0, Math.floor(hole.y - PAD));
+  const sw  = Math.min(CW, Math.ceil(hole.x + hole.w + PAD)) - sx;
+  const sh  = Math.min(CH, Math.ceil(hole.y + hole.h + PAD)) - sy;
+
+  // ── 3. Apply portrait-style filter to player face ───────────────────────────
+  const faceCanvas = document.createElement('canvas');
+  faceCanvas.width = sw; faceCanvas.height = sh;
+  const fCtx = faceCanvas.getContext('2d');
+
+  fCtx.filter = 'sepia(0.38) saturate(0.74) brightness(0.88) contrast(0.92)';
+  fCtx.drawImage(frozen, sx, sy, sw, sh, 0, 0, sw, sh);
+  fCtx.filter = 'none';
+
+  // ── 4. Warm amber multiply overlay (shifts skin tones toward portrait palette) ─
+  fCtx.globalCompositeOperation = 'multiply';
+  fCtx.fillStyle = 'rgba(205, 148, 58, 0.26)';
+  fCtx.fillRect(0, 0, sw, sh);
+  fCtx.globalCompositeOperation = 'source-over';
+
+  // ── 5. Radial feather mask: opaque center → transparent at patch edges ───────
+  const maskCanvas = document.createElement('canvas');
+  maskCanvas.width = sw; maskCanvas.height = sh;
+  const mCtx = maskCanvas.getContext('2d');
+
+  const mcx     = hole.cx - sx;
+  const mcy     = hole.cy - sy;
+  const innerR  = Math.min(hole.w, hole.h) * 0.22;
+  const outerR  = Math.max(hole.w, hole.h) * 0.60 + PAD;
+  const feather = mCtx.createRadialGradient(mcx, mcy, innerR, mcx, mcy, outerR);
+  feather.addColorStop(0,    'rgba(0,0,0,1)');
+  feather.addColorStop(0.75, 'rgba(0,0,0,0.97)');
+  feather.addColorStop(1,    'rgba(0,0,0,0)');
+  mCtx.fillStyle = feather;
+  mCtx.fillRect(0, 0, sw, sh);
+
+  fCtx.globalCompositeOperation = 'destination-in';
+  fCtx.drawImage(maskCanvas, 0, 0);
+  fCtx.globalCompositeOperation = 'source-over';
+
+  // ── 6. Composite styled face into portrait ──────────────────────────────────
+  cCtx.drawImage(faceCanvas, sx, sy);
+
+  // ── 7. Subtle seam vignette: darkens the transition ring slightly ────────────
+  const vigCanvas = document.createElement('canvas');
+  vigCanvas.width = sw; vigCanvas.height = sh;
+  const vCtx = vigCanvas.getContext('2d');
+  const vig  = vCtx.createRadialGradient(mcx, mcy, innerR * 1.2, mcx, mcy, outerR);
+  vig.addColorStop(0,    'rgba(0,0,0,0)');
+  vig.addColorStop(0.68, 'rgba(0,0,0,0)');
+  vig.addColorStop(0.84, 'rgba(0,0,0,0.32)');
+  vig.addColorStop(1,    'rgba(0,0,0,0)');
+  vCtx.fillStyle = vig;
+  vCtx.fillRect(0, 0, sw, sh);
+  cCtx.drawImage(vigCanvas, sx, sy);
+
+  return cCanvas;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -969,9 +1135,10 @@ $('img-upload').addEventListener('change', async function () {
     portrait = img;
     imgNW    = img.naturalWidth;
     imgNH    = img.naturalHeight;
-    // Reset hole to fallback fractions before calibration
+    // Reset hole to fallback fractions + default targets before calibration
     HOLE_XF = 0.360; HOLE_YF = 0.292; HOLE_WF = 0.195; HOLE_HF = 0.085;
     NOSE_IN_H = 0.30; MOUTH_IN_H = 0.72;
+    holeTargets = DEFAULT_TARGETS.map(t => ({ ...t }));
     computeHole();
     drawPortraitWithHole(pCtx, pCanvas.width, pCanvas.height);
   } catch (e) {
