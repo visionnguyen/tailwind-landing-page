@@ -203,6 +203,53 @@
     }
 
     .hidden { display: none !important; }
+
+    /* ═══ SETTINGS BUTTON (top-right) ═══ */
+    #settings-btn {
+      position: fixed;
+      top: max(env(safe-area-inset-top, 12px), 12px);
+      right: 14px;
+      z-index: 35;
+      width: 42px; height: 42px;
+      border: 1px solid rgba(240,192,64,.30);
+      border-radius: 50%;
+      background: rgba(6,5,15,.72);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      color: rgba(240,192,64,.85);
+      transition: transform .25s, background .2s, border-color .2s;
+    }
+    #settings-btn:hover {
+      transform: rotate(35deg) scale(1.1);
+      background: rgba(24,16,48,.92);
+      border-color: rgba(240,192,64,.65);
+    }
+    #settings-btn:active { transform: scale(.88); }
+    #settings-btn svg { pointer-events: none; }
+
+    /* ═══ BOTTOM TOAST ═══ */
+    #toast-bottom {
+      position: fixed;
+      bottom: 32px; left: 50%;
+      transform: translateX(-50%) translateY(72px);
+      z-index: 36;
+      padding: 11px 26px;
+      border-radius: 999px;
+      font-size: .88em; letter-spacing: .03em;
+      background: rgba(6,5,15,.90);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0;
+      transition: transform .38s cubic-bezier(.34,1.56,.64,1), opacity .3s;
+    }
+    #toast-bottom.show   { transform: translateX(-50%) translateY(0); opacity: 1; }
+    #toast-bottom.success{ border: 1px solid rgba(80,255,130,.45); color: #80ffaa; }
+    #toast-bottom.error  { border: 1px solid rgba(255,100,80,.45);  color: #ff9070; }
+    #toast-bottom.info   { border: 1px solid rgba(240,192,64,.35);  color: #f0c040; }
   </style>
 </head>
 <body>
@@ -246,6 +293,25 @@
   <button id="again-btn" class="btn btn-gold">🔄 Chơi Lại</button>
 </div>
 
+<!-- ═══ SETTINGS BUTTON + FILE INPUT ═══ -->
+<button id="settings-btn" title="Đổi hình nhân vật">
+  <svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor">
+    <path d="M12 15.5A3.5 3.5 0 0 1 8.5 12 3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5
+      3.5 3.5 0 0 1-3.5 3.5m7.43-2.92c.04-.34.07-.69.07-1.08s-.03-.73-.07-1.08l2.32-1.8
+      c.21-.16.27-.46.13-.7l-2.2-3.81c-.14-.24-.43-.32-.67-.24l-2.73 1.1c-.57-.44-1.18-.8
+      -1.86-1.07L14.05 2h-4.1L9.57 4.9C8.89 5.17 8.28 5.54 7.71 5.97L5 4.87C4.75 4.79
+      4.46 4.87 4.32 5.11L2.12 8.92C1.98 9.16 2.04 9.46 2.25 9.62L4.57 11.42
+      C4.53 11.77 4.5 12.12 4.5 12.5s.03.73.07 1.08l-2.32 1.8c-.21.16-.27.46-.13.7
+      l2.2 3.81c.14.24.43.32.67.24l2.73-1.1c.57.44 1.18.8 1.86 1.07L9.95 22h4.1
+      l.38-2.9c.68-.27 1.29-.63 1.86-1.07l2.73 1.1c.25.08.54 0 .67-.24l2.2-3.81
+      c.14-.24.08-.54-.13-.7l-2.33-1.8z"/>
+  </svg>
+</button>
+<input id="img-upload" type="file" accept="image/*" style="display:none">
+
+<!-- ═══ BOTTOM TOAST ═══ -->
+<div id="toast-bottom"></div>
+
 <canvas id="proc-canvas" style="display:none"></canvas>
 
 <script>
@@ -254,7 +320,7 @@
 // ═══════════════════════════════════════════════════════
 const MODEL_URL    = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.14/model';
 const PORTRAIT_SRC = './Mona_Lisa,_by_Leonardo_da_Vinci,_from_C2RMF_retouched.jpg';
-const CHARACTER    = 'Mona Lisa';
+let   CHARACTER    = 'Mona Lisa';
 
 // Hole fractions – overwritten by calibrateHole() after face-api detects landmarks
 // in the portrait itself.  Fallback values tuned for the 1920×2861 Mona Lisa image:
@@ -301,6 +367,7 @@ let winDone     = false;
 let alignBuf    = [];
 let detectTimer = null;
 let guideRAF    = null;
+let modelsReady = false;
 
 // ═══════════════════════════════════════════════════════
 //  RESIZE + GEOMETRY
@@ -336,14 +403,14 @@ function computeHole() {
 //  AUTO-CALIBRATE HOLE FROM PORTRAIT FACE DETECTION
 // ═══════════════════════════════════════════════════════
 async function calibrateHole() {
-  if (!portrait) return;
+  if (!portrait) return false;
   try {
     const det = await faceapi
       .detectSingleFace(portrait,
         new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.15 }))
       .withFaceLandmarks(true);
 
-    if (!det) { console.log('calibrateHole: no face detected in portrait, using fallback'); return; }
+    if (!det) { console.log('calibrateHole: no face detected in portrait, using fallback'); return false; }
 
     const pts    = det.landmarks.positions;
     // 68-point model indices:
@@ -354,7 +421,7 @@ async function calibrateHole() {
     const mouthL  = pts[48], mouthR = pts[54];
     const lipTop  = pts[51], lipBot = pts[57];
 
-    const nW = noseR.x - noseL.x;                          // nose width in image px
+    const nW = noseR.x - noseL.x;
     const hx = Math.min(noseL.x, mouthL.x)  - nW * 0.70;
     const hy = noseTip.y                     - nW * 0.40;
     const hw = Math.max(noseR.x, mouthR.x)  + nW * 0.70 - hx;
@@ -370,8 +437,10 @@ async function calibrateHole() {
     computeHole();
     drawPortraitWithHole(pCtx, pCanvas.width, pCanvas.height);
     console.log('Hole auto-calibrated from portrait:', { HOLE_XF, HOLE_YF, HOLE_WF, HOLE_HF });
+    return true;
   } catch(e) {
     console.warn('calibrateHole error:', e);
+    return false;
   }
 }
 
@@ -815,6 +884,8 @@ async function boot() {
     throw new Error('Không tải được AI model. Kiểm tra kết nối mạng.\n'+e.message);
   }
 
+  modelsReady = true;
+
   // 3 · Auto-calibrate hole position by detecting face landmarks in portrait
   $('loading-pill').textContent = 'Đang căn chỉnh vị trí mũi miệng… 🎯';
   await calibrateHole();
@@ -824,6 +895,88 @@ async function boot() {
   $('loading-pill').classList.add('hidden');
   $('start-overlay').classList.remove('hidden');
 }
+
+// ═══════════════════════════════════════════════════════
+//  TOAST (bottom-center)
+// ═══════════════════════════════════════════════════════
+let _toastTimer = null;
+function showToast(msg, type = 'info', ms = 3200) {
+  const el = $('toast-bottom');
+  el.textContent = msg;
+  el.className   = `show ${type}`;
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { el.className = type; }, ms);
+}
+
+// ═══════════════════════════════════════════════════════
+//  SETTINGS – CUSTOM IMAGE UPLOAD
+// ═══════════════════════════════════════════════════════
+$('settings-btn').addEventListener('click', () => {
+  if (detecting) {
+    // Stop current game, go back to start
+    detecting = false;
+    clearInterval(detectTimer);
+    cancelAnimationFrame(guideRAF);
+    if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+    winDone = false; alignBuf = [];
+    $('hud').style.display = 'none';
+    $('title-pill').style.display = 'none';
+    $('loading-pill').classList.add('hidden');
+  }
+  $('img-upload').value = '';
+  $('img-upload').click();
+});
+
+$('img-upload').addEventListener('change', async function () {
+  const file = this.files[0];
+  if (!file) return;
+
+  // Derive character name from filename
+  CHARACTER = file.name
+    .replace(/\.[^.]+$/, '')
+    .replace(/[_\-\.]+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, c => c.toUpperCase()) || 'Nhân Vật Bí Ẩn';
+
+  showToast('⏳ Đang tải hình…', 'info', 60000);
+
+  // Load image from local file (blob URL = same-origin, no CORS issue)
+  try {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+    portrait = img;
+    imgNW    = img.naturalWidth;
+    imgNH    = img.naturalHeight;
+    // Reset hole to fallback fractions before calibration
+    HOLE_XF = 0.360; HOLE_YF = 0.292; HOLE_WF = 0.195; HOLE_HF = 0.085;
+    NOSE_IN_H = 0.30; MOUTH_IN_H = 0.72;
+    computeHole();
+    drawPortraitWithHole(pCtx, pCanvas.width, pCanvas.height);
+  } catch (e) {
+    showToast('❌ Không tải được hình', 'error');
+    return;
+  }
+
+  // Auto-calibrate if models are ready
+  if (modelsReady) {
+    showToast('🔍 Đang xác định vị trí mũi miệng…', 'info', 60000);
+    const ok = await calibrateHole();
+    showToast(
+      ok ? '✅ Đã xác định vị trí mũi miệng!' : '⚠️ Không nhận ra khuôn mặt — dùng vị trí mặc định',
+      ok ? 'success' : 'error'
+    );
+  } else {
+    showToast('✅ Hình đã tải! (AI đang nạp, tự căn chỉnh sau…)', 'success');
+  }
+
+  // Ensure we're at the start screen
+  $('win-msg-wrap').classList.add('hidden');
+  $('again-wrap').classList.add('hidden');
+  winCanvas.classList.add('hidden');
+  $('loading-pill').classList.add('hidden');
+  $('start-overlay').classList.remove('hidden');
+});
 
 // ═══════════════════════════════════════════════════════
 //  EVENTS
