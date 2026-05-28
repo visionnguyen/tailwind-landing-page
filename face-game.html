@@ -3,216 +3,142 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>🎭 Bạn Là Ai?</title>
+  <title>🎭 Bạn Là Ai? – Trò Chơi Ma Thuật</title>
+  <!-- face-api.js v0.22.2 – tested, exports window.faceapi reliably -->
   <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: 'Georgia', serif; color: #fff; }
 
-    /* ═══ FULL-SCREEN GAME CONTAINER ═══ */
-    #game-container {
-      position: fixed; inset: 0;
-      width: 100vw; height: 100vh;
+    body {
+      background: #06050f;
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      font-family: 'Georgia', 'Times New Roman', serif;
+      overflow: hidden;
+      color: #fff;
     }
 
-    /* Webcam – behind everything */
+    /* ── starfield ── */
+    #starfield { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+
+    /* ── screens ── */
+    .screen {
+      position: relative; z-index: 1;
+      width: 100%; max-width: 480px;
+      display: flex; flex-direction: column;
+      align-items: center; padding: 16px; gap: 12px;
+    }
+    .hidden { display: none !important; }
+
+    /* ── loading ── */
+    #loading-screen {
+      position: fixed; inset: 0; z-index: 500;
+      background: #06050f;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 16px;
+    }
+    .spinner {
+      width: 52px; height: 52px;
+      border: 3px solid rgba(240,192,64,.18);
+      border-top-color: #f0c040;
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #load-text { color: #f0c040; font-size: .95em; letter-spacing: .04em; text-align: center; max-width: 280px; }
+
+    /* ── title ── */
+    .game-title {
+      font-size: 2em;
+      background: linear-gradient(135deg,#f0c040,#e8830a,#f0c040);
+      background-size: 200%;
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: shimmer 3s linear infinite;
+      text-align: center; line-height: 1.2;
+    }
+    @keyframes shimmer { 0%{background-position:0%} 100%{background-position:200%} }
+    .subtitle { color: rgba(255,255,255,.65); font-size: .9em; text-align: center; line-height: 1.6; }
+
+    /* ── portrait frame ── */
+    .portrait-wrapper {
+      position: relative; width: 280px; height: 420px;
+    }
+    .portrait-wrapper::before {
+      content: ''; position: absolute; inset: -3px; border-radius: 10px;
+      background: linear-gradient(45deg,#f0c040,#e83060,#3090f0,#60f090,#f0c040);
+      background-size: 300%;
+      animation: borderSpin 4s linear infinite;
+      z-index: -1; filter: blur(5px);
+    }
+    @keyframes borderSpin { 0%{background-position:0%} 100%{background-position:300%} }
+
     #webcam-video {
       position: absolute; inset: 0;
       width: 100%; height: 100%;
       object-fit: cover;
       transform: scaleX(-1);
-      z-index: 1;
+      border-radius: 8px;
     }
-
-    /* Portrait drawn on canvas (transparent hole shows webcam) */
-    #portrait-canvas {
+    #portrait-canvas, #guide-canvas {
       position: absolute; inset: 0;
       width: 100%; height: 100%;
-      z-index: 2;
+      border-radius: 8px;
     }
+    #portrait-canvas { z-index: 2; }
+    #guide-canvas    { z-index: 3; pointer-events: none; }
 
-    /* Alignment guides & lock-on ring */
-    #guide-canvas {
-      position: absolute; inset: 0;
-      width: 100%; height: 100%;
-      z-index: 3;
-      pointer-events: none;
-    }
-
-    /* ═══ 4-EDGE LOADING BORDER ═══
-       A glowing gradient comet that sweeps around all 4 edges.
-       We animate background-position on a long gradient strip.      */
-    .edge-loader {
-      position: fixed; z-index: 20; pointer-events: none;
-      opacity: 0; transition: opacity .3s;
-    }
-    .edge-loader.active { opacity: 1; }
-
-    #edge-top, #edge-bottom {
-      left: 0; right: 0; height: 3px;
-      background: linear-gradient(90deg,
-        transparent 0%, transparent 30%,
-        #f0c040 48%, #fff 50%, #f0c040 52%,
-        transparent 70%, transparent 100%);
-      background-size: 300% 100%;
-    }
-    #edge-left, #edge-right {
-      top: 0; bottom: 0; width: 3px;
-      background: linear-gradient(180deg,
-        transparent 0%, transparent 30%,
-        #f0c040 48%, #fff 50%, #f0c040 52%,
-        transparent 70%, transparent 100%);
-      background-size: 100% 300%;
-    }
-    #edge-top    { top: 0;    animation: sweepH 1.6s linear infinite; }
-    #edge-bottom { bottom: 0; animation: sweepH 1.6s linear infinite reverse; }
-    #edge-left   { left: 0;   animation: sweepV 1.6s linear infinite 0.4s; }
-    #edge-right  { right: 0;  animation: sweepV 1.6s linear infinite reverse 0.4s; }
-
-    @keyframes sweepH {
-      0%   { background-position: -100% 0; box-shadow: none; }
-      50%  { box-shadow: 0 0 14px #f0c040, 0 0 28px rgba(240,192,64,.5); }
-      100% { background-position: 200%  0; box-shadow: none; }
-    }
-    @keyframes sweepV {
-      0%   { background-position: 0 -100%; box-shadow: none; }
-      50%  { box-shadow: 0 0 14px #f0c040, 0 0 28px rgba(240,192,64,.5); }
-      100% { background-position: 0  200%; box-shadow: none; }
-    }
-
-    /* ═══ TOP-CENTER UI OVERLAY ═══ */
-    #ui-top {
-      position: fixed; top: 0; left: 0; right: 0;
-      z-index: 30;
-      display: flex; flex-direction: column;
-      align-items: center;
-      padding: env(safe-area-inset-top, 14px) 16px 0;
-      gap: 8px;
-      pointer-events: none;
-    }
-
-    /* pill container shared by all top banners */
-    .pill {
-      background: rgba(6, 5, 15, .78);
-      border: 1px solid rgba(240,192,64,.28);
-      border-radius: 999px;
-      padding: 9px 22px;
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      text-align: center;
-      pointer-events: auto;
-    }
-
-    #loading-pill { font-size: .88em; color: #f0c040; letter-spacing: .04em; }
-
-    #title-pill { display: none; }
-    .game-title-sm {
-      font-size: 1.1em;
-      background: linear-gradient(90deg, #f0c040, #e8830a, #f0c040);
-      background-size: 200%;
-      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-      background-clip: text;
-      animation: shimmer 3s linear infinite;
-    }
-    @keyframes shimmer { 0%{background-position:0%} 100%{background-position:200%} }
-
-    /* HUD: progress + status */
-    #hud { display: none; flex-direction: column; align-items: center; gap: 6px; width: min(90vw, 340px); }
+    /* ── progress ── */
     #progress-track {
-      width: 100%; height: 10px;
-      background: rgba(255,255,255,.12);
+      width: 280px; height: 12px;
+      background: rgba(255,255,255,.1);
       border-radius: 999px; overflow: hidden;
     }
     #progress-fill {
       height: 100%; width: 0%;
       border-radius: 999px;
-      background: linear-gradient(90deg, #e83060, #f0c040);
+      background: linear-gradient(90deg,#e83060,#f0c040);
       transition: width .12s ease;
       box-shadow: 0 0 8px rgba(240,192,64,.5);
     }
     #status-text {
-      font-size: .82em; color: rgba(255,255,255,.85);
-      text-shadow: 0 1px 5px rgba(0,0,0,.9);
-      text-align: center;
+      color: rgba(255,255,255,.7); font-size: .85em;
+      text-align: center; min-height: 1.4em;
     }
 
-    /* ═══ START OVERLAY (bottom-center) ═══ */
-    #start-overlay {
-      position: fixed; inset: 0; z-index: 25;
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: flex-end;
-      padding-bottom: max(env(safe-area-inset-bottom, 0px), 10vh);
-      background: linear-gradient(to top, rgba(0,0,0,.6) 0%, transparent 55%);
-      pointer-events: none;
-    }
-    #start-overlay .inner {
-      display: flex; flex-direction: column;
-      align-items: center; gap: 14px;
-      pointer-events: auto;
-    }
-    #start-subtitle {
-      font-size: .84em; color: rgba(255,255,255,.65);
-      text-align: center; text-shadow: 0 1px 6px rgba(0,0,0,.9);
-    }
-
-    /* ═══ BUTTONS ═══ */
+    /* ── buttons ── */
     .btn {
-      padding: 14px 44px; border: none; border-radius: 999px;
-      cursor: pointer; font-size: 1.1em;
+      padding: 12px 36px; border: none; border-radius: 999px;
+      cursor: pointer; font-size: 1.05em;
       font-family: inherit; font-weight: bold;
       transition: transform .15s, box-shadow .15s; outline: none;
     }
     .btn:hover  { transform: scale(1.06); }
-    .btn:active { transform: scale(.96); }
+    .btn:active { transform: scale(.97); }
     .btn-gold {
-      background: linear-gradient(135deg, #f0c040, #e8830a);
+      background: linear-gradient(135deg,#f0c040,#e8830a);
       color: #1a0800;
-      box-shadow: 0 6px 28px rgba(240,192,64,.55);
+      box-shadow: 0 4px 22px rgba(240,192,64,.45);
     }
-    .btn-gold:hover { box-shadow: 0 8px 36px rgba(240,192,64,.8); }
+    .btn-gold:hover { box-shadow: 0 6px 32px rgba(240,192,64,.75); }
 
-    /* ═══ WIN ═══ */
-    /* Full-screen canvas that replaces the portrait during win animation */
-    #win-canvas {
-      position: fixed; inset: 0; z-index: 40;
-      width: 100%; height: 100%;
-      display: block;
-    }
-    /* Win message at top/center */
-    #win-msg-wrap {
-      position: fixed; top: 0; left: 0; right: 0;
-      z-index: 50;
-      display: flex; justify-content: center;
-      padding-top: max(env(safe-area-inset-top, 14px), 18px);
-      padding-left: 16px; padding-right: 16px;
-    }
+    /* ── win screen ── */
+    #win-canvas { width: 280px; height: 420px; border-radius: 8px; display: block; }
     #win-msg {
-      background: rgba(6,5,15,.84);
-      border: 1px solid rgba(240,192,64,.45);
-      border-radius: 20px;
-      padding: 18px 26px;
-      text-align: center;
-      font-size: 1.15em; line-height: 1.7;
+      text-align: center; font-size: 1.18em; line-height: 1.65;
       color: #f0c040;
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      max-width: 340px;
-      animation: glowBox 1.7s ease-in-out infinite alternate;
+      animation: glowPulse 1.6s ease-in-out infinite alternate;
+      max-width: 320px;
     }
-    @keyframes glowBox {
-      from { box-shadow: 0 0 18px rgba(240,192,64,.25), 0 4px 24px rgba(0,0,0,.6); }
-      to   { box-shadow: 0 0 44px rgba(240,192,64,.7),  0 4px 24px rgba(0,0,0,.6); }
-    }
-    /* Play again at bottom */
-    #again-wrap {
-      position: fixed; bottom: max(env(safe-area-inset-bottom,0px), 10vh);
-      left: 0; right: 0; z-index: 50;
-      display: flex; justify-content: center;
+    @keyframes glowPulse {
+      from { text-shadow: 0 0 10px #f0c040, 0 0 20px rgba(240,100,0,.5); }
+      to   { text-shadow: 0 0 30px #f0c040, 0 0 60px orange, 0 0 90px yellow; }
     }
 
-    /* ═══ PARTICLES ═══ */
+    /* ── particles ── */
     .spark {
-      position: fixed; border-radius: 50%; pointer-events: none; z-index: 60;
+      position: fixed; border-radius: 50%; pointer-events: none; z-index: 400;
       animation: sparkFly linear forwards;
     }
     @keyframes sparkFly {
@@ -220,144 +146,141 @@
       100% { opacity: 0; transform: translate(var(--tx),var(--ty)) scale(0); }
     }
 
-    /* hidden util */
-    .hidden { display: none !important; }
+    /* ── intro preview ── */
+    #preview-canvas { width: 140px; height: 210px; border-radius: 6px; }
   </style>
 </head>
 <body>
 
-<!-- ═══ GAME CONTAINER ═══ -->
-<div id="game-container">
-  <video id="webcam-video" autoplay muted playsinline></video>
-  <canvas id="portrait-canvas"></canvas>
-  <canvas id="guide-canvas"></canvas>
+<canvas id="starfield"></canvas>
+
+<!-- ── LOADING ── -->
+<div id="loading-screen">
+  <div class="spinner"></div>
+  <p id="load-text">Đang triệu hồi phép thuật… ✨</p>
 </div>
 
-<!-- ═══ 4-EDGE LOADING BORDER ═══ -->
-<div class="edge-loader" id="edge-top"></div>
-<div class="edge-loader" id="edge-bottom"></div>
-<div class="edge-loader" id="edge-left"></div>
-<div class="edge-loader" id="edge-right"></div>
+<!-- ── INTRO ── -->
+<div id="intro-screen" class="screen hidden">
+  <div class="game-title">🎭 Bạn Là Ai?</div>
+  <p class="subtitle">
+    Một bức chân dung huyền bí đang thiếu một phần.<br>
+    Hãy đặt <strong>mũi</strong> và <strong>miệng</strong> của bạn vào ô trống!
+  </p>
+  <canvas id="preview-canvas" width="140" height="210"></canvas>
+  <p class="subtitle" style="font-size:.78em; color:rgba(255,220,80,.6);">👆 Ô vàng chờ bạn hoàn thiện</p>
+  <button id="start-btn" class="btn btn-gold">🎬 Bắt Đầu Chơi</button>
+  <p style="color:rgba(255,255,255,.3); font-size:.72em;">Cần cho phép truy cập camera</p>
+</div>
 
-<!-- ═══ TOP-CENTER UI ═══ -->
-<div id="ui-top">
-  <div class="pill" id="loading-pill">Đang triệu hồi phép thuật… ✨</div>
-  <div class="pill" id="title-pill"><span class="game-title-sm">🎭 Nhân Vật Bí Ẩn</span></div>
-  <div id="hud">
-    <div id="progress-track"><div id="progress-fill"></div></div>
-    <p id="status-text">👆 Di chuyển mặt vào ô trống…</p>
+<!-- ── GAME ── -->
+<div id="game-screen" class="screen hidden">
+  <div class="game-title" style="font-size:1.3em;">🎭 Nhân Vật Bí Ẩn</div>
+  <p class="subtitle" style="font-size:.82em;">Đặt mũi và miệng vào ô vàng ✨</p>
+  <div class="portrait-wrapper">
+    <video id="webcam-video" autoplay muted playsinline></video>
+    <canvas id="portrait-canvas" width="280" height="420"></canvas>
+    <canvas id="guide-canvas"    width="280" height="420"></canvas>
   </div>
+  <div id="progress-track"><div id="progress-fill"></div></div>
+  <p id="status-text">👆 Di chuyển mặt vào ô trống…</p>
 </div>
 
-<!-- ═══ START OVERLAY ═══ -->
-<div id="start-overlay" class="hidden">
-  <div class="inner">
-    <p id="start-subtitle">Đặt <strong>mũi</strong> và <strong>miệng</strong> vào ô vàng ✨</p>
-    <button id="start-btn" class="btn btn-gold">🎬 Bắt Đầu Chơi</button>
-    <p style="font-size:.72em;color:rgba(255,255,255,.3)">Cần cho phép truy cập camera</p>
-  </div>
+<!-- ── WIN ── -->
+<div id="win-screen" class="screen hidden">
+  <div class="game-title" style="font-size:1.25em;">✨ PHÉP THUẬT! ✨</div>
+  <canvas id="win-canvas" width="280" height="420"></canvas>
+  <p id="win-msg"></p>
+  <button id="again-btn" class="btn btn-gold" style="margin-top:4px">🔄 Chơi Lại</button>
 </div>
 
-<!-- ═══ WIN ═══ -->
-<canvas id="win-canvas" class="hidden"></canvas>
-<div id="win-msg-wrap" class="hidden"><div id="win-msg"></div></div>
-<div id="again-wrap"   class="hidden">
-  <button id="again-btn" class="btn btn-gold">🔄 Chơi Lại</button>
-</div>
-
-<!-- processing canvas (invisible) -->
-<canvas id="proc-canvas" style="display:none"></canvas>
+<!-- hidden – face detection processes here -->
+<canvas id="proc-canvas" width="280" height="420" style="display:none"></canvas>
 
 <script>
 // ═══════════════════════════════════════════════════════
 //  CONFIG
 // ═══════════════════════════════════════════════════════
+const W = 280, H = 420;
+
+// Models – @vladmandic/face-api includes weights inside npm package ✓
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.14/model';
-const PORTRAIT_SRC = './Mona_Lisa,_by_Leonardo_da_Vinci,_from_C2RMF_retouched.jpg';
+
+// Portrait: Mona Lisa (public domain, Wikimedia Commons, CORS: *)
+const PORTRAIT_SRC =
+  'https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/' +
+  'Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg/' +
+  '402px-Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg';
+
 const CHARACTER = 'Mona Lisa';
 
-// Hole = nose + mouth area, as FRACTION of original image dimensions.
-// Mona Lisa 402×602: face center ~(200,210), nose ~y=245, mouth ~y=280.
-const HOLE_XF = 0.355;   // left edge (fraction of img width)
-const HOLE_YF = 0.350;   // top  edge (fraction of img height)
-const HOLE_WF = 0.290;   // width
-const HOLE_HF = 0.165;   // height
-// Within hole:
-const NOSE_IN_H  = 0.28; // nose target = 28 % from top of hole
-const MOUTH_IN_H = 0.72; // mouth target = 72 % from top of hole
+// Hole: covers nose + mouth of Mona Lisa at 280×420
+const HOLE_XF = 0.26, HOLE_YF = 0.335;
+const HOLE_WF = 0.48, HOLE_HF = 0.235;
 
-const TOLERANCE_F = 0.30; // alignment tolerance as fraction of hole.w
-const BUFFER_SIZE = 36;
-const WIN_THRESH  = 0.76;
+// Win tuning
+const TOLERANCE_F = 0.30;   // fraction of hole.w = alignment radius
+const BUFFER_SIZE  = 38;    // rolling frames to average
+const WIN_THRESH   = 0.76;  // avg score threshold
 
 // ═══════════════════════════════════════════════════════
 //  ELEMENTS
 // ═══════════════════════════════════════════════════════
 const $ = id => document.getElementById(id);
-const videoEl      = $('webcam-video');
-const pCanvas      = $('portrait-canvas');
-const gCanvas      = $('guide-canvas');
-const procCanvas   = $('proc-canvas');
-const winCanvas    = $('win-canvas');
-const progressFill = $('progress-fill');
-const statusText   = $('status-text');
-const winMsg       = $('win-msg');
+const loadingScreen = $('loading-screen');
+const introScreen   = $('intro-screen');
+const gameScreen    = $('game-screen');
+const winScreen     = $('win-screen');
+const videoEl       = $('webcam-video');
+const pCanvas       = $('portrait-canvas');
+const gCanvas       = $('guide-canvas');
+const procCanvas    = $('proc-canvas');
+const winCanvas     = $('win-canvas');
+const prevCanvas    = $('preview-canvas');
+const progressFill  = $('progress-fill');
+const statusText    = $('status-text');
+const winMsg        = $('win-msg');
 
 const pCtx    = pCanvas.getContext('2d');
 const gCtx    = gCanvas.getContext('2d');
 const procCtx = procCanvas.getContext('2d');
 const winCtx  = winCanvas.getContext('2d');
+const prevCtx = prevCanvas.getContext('2d');
 
 // ═══════════════════════════════════════════════════════
 //  STATE
 // ═══════════════════════════════════════════════════════
-let portrait  = null;  // Image element, loaded via blob URL
-let imgNW = 402, imgNH = 602; // natural image size (updated on load)
+let portrait = null;          // Image element, set after blob-URL load succeeds
 
-let hole       = {};
+let hole = {};
 let mediaStream = null;
-let detecting  = false;
-let winDone    = false;
-let alignBuf   = [];
+let detecting   = false;
+let winDone     = false;
+let alignBuf    = [];
 let detectTimer = null;
-let guideRAF   = null;
+let guideRAF    = null;
 
 // ═══════════════════════════════════════════════════════
-//  CANVAS RESIZE + HOLE GEOMETRY
+//  GEOMETRY
 // ═══════════════════════════════════════════════════════
-function resize() {
-  const W = window.innerWidth, H = window.innerHeight;
-  [pCanvas, gCanvas, procCanvas, winCanvas].forEach(c => {
-    c.width = W; c.height = H;
-  });
-  computeHole();
-}
-
-// "Cover" transform: scale image to fill canvas (like CSS object-fit:cover)
-function coverXform(cw, ch) {
-  const s = Math.max(cw / imgNW, ch / imgNH);
-  const ox = (cw - imgNW * s) / 2;
-  const oy = (ch - imgNH * s) / 2;
-  return { s, ox, oy };
-}
-
 function computeHole() {
-  const { s, ox, oy } = coverXform(pCanvas.width, pCanvas.height);
-  hole.x  = HOLE_XF * imgNW * s + ox;
-  hole.y  = HOLE_YF * imgNH * s + oy;
-  hole.w  = HOLE_WF * imgNW * s;
-  hole.h  = HOLE_HF * imgNH * s;
+  hole.x  = Math.round(HOLE_XF * W);
+  hole.y  = Math.round(HOLE_YF * H);
+  hole.w  = Math.round(HOLE_WF * W);
+  hole.h  = Math.round(HOLE_HF * H);
   hole.cx = hole.x + hole.w / 2;
   hole.cy = hole.y + hole.h / 2;
-  hole.noseTgt  = { x: hole.cx, y: hole.y + hole.h * NOSE_IN_H  };
-  hole.mouthTgt = { x: hole.cx, y: hole.y + hole.h * MOUTH_IN_H };
-  hole.tol = hole.w * TOLERANCE_F;
+  // nose target: upper 30 % of hole height
+  hole.noseTgt  = { x: hole.cx, y: hole.y + hole.h * 0.30 };
+  // mouth target: lower 72 % of hole height
+  hole.mouthTgt = { x: hole.cx, y: hole.y + hole.h * 0.72 };
+  hole.tol      = hole.w * TOLERANCE_F;
 }
 
 // ═══════════════════════════════════════════════════════
-//  DRAW PORTRAIT + HOLE
+//  CANVAS HELPERS
 // ═══════════════════════════════════════════════════════
-function rrPath(ctx, x, y, w, h, r = 10) {
+function rrPath(ctx, x, y, w, h, r = 8) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
   ctx.lineTo(x + w - r, y);
@@ -371,246 +294,326 @@ function rrPath(ctx, x, y, w, h, r = 10) {
   ctx.closePath();
 }
 
-function drawPortraitLayer(ctx, cw, ch) {
-  ctx.clearRect(0, 0, cw, ch);
-  if (portrait && portrait.complete && portrait.naturalWidth > 0) {
-    const { s, ox, oy } = coverXform(cw, ch);
-    try {
-      ctx.drawImage(portrait, ox, oy, imgNW * s, imgNH * s);
-      return;
-    } catch (_) {}
+// ── Programmatic "Mona Lisa" portrait drawn with Canvas 2D ──────────────────
+function drawFallbackPortrait(ctx, cw, ch) {
+  const sc = cw / 280;
+
+  // Background – warm aged canvas
+  const bg = ctx.createLinearGradient(0, 0, 0, ch);
+  bg.addColorStop(0,   '#52412a');
+  bg.addColorStop(0.45,'#6a4e2c');
+  bg.addColorStop(1,   '#2a1a08');
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, cw, ch);
+
+  // Left landscape hill
+  ctx.fillStyle = '#3d5a48';
+  ctx.beginPath();
+  ctx.moveTo(0, ch * 0.48);
+  ctx.quadraticCurveTo(cw * 0.12, ch * 0.22, cw * 0.32, ch * 0.36);
+  ctx.lineTo(cw * 0.32, ch); ctx.lineTo(0, ch);
+  ctx.fill();
+
+  // Right landscape hill
+  ctx.fillStyle = '#2d4a38';
+  ctx.beginPath();
+  ctx.moveTo(cw, ch * 0.52);
+  ctx.quadraticCurveTo(cw * 0.88, ch * 0.24, cw * 0.68, ch * 0.38);
+  ctx.lineTo(cw * 0.68, ch); ctx.lineTo(cw, ch);
+  ctx.fill();
+
+  // Misty sky overlay
+  const sky = ctx.createLinearGradient(0, 0, 0, ch * 0.38);
+  sky.addColorStop(0, 'rgba(50,75,90,.75)');
+  sky.addColorStop(1, 'rgba(50,75,90,0)');
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, cw, ch * 0.38);
+
+  // Dark dress / body – lower half
+  ctx.fillStyle = '#2c3322';
+  ctx.beginPath();
+  ctx.moveTo(0, ch);
+  ctx.lineTo(cw, ch);
+  ctx.lineTo(cw * 0.94, ch * 0.64);
+  ctx.bezierCurveTo(cw * 0.82, ch * 0.54, cw * 0.65, ch * 0.54, cw * 0.58, ch * 0.62);
+  ctx.bezierCurveTo(cw * 0.55, ch * 0.67, cw * 0.50, ch * 0.67, cw * 0.42, ch * 0.62);
+  ctx.bezierCurveTo(cw * 0.35, ch * 0.54, cw * 0.18, ch * 0.54, cw * 0.06, ch * 0.64);
+  ctx.closePath();
+  ctx.fill();
+
+  // Dress fold lines
+  ctx.strokeStyle = 'rgba(100,90,60,.35)';
+  ctx.lineWidth = 1.5 * sc;
+  [[0.18, 0.72, 0.16, 1.0], [0.42, 0.70, 0.40, 1.0], [0.62, 0.70, 0.64, 1.0]]
+    .forEach(([x1, y1, x2, y2]) => {
+      ctx.beginPath();
+      ctx.moveTo(cw * x1, ch * y1);
+      ctx.lineTo(cw * x2, ch * y2);
+      ctx.stroke();
+    });
+
+  const skin   = '#c09060';
+  const skinLt = '#d4a878';
+
+  // Neck
+  ctx.fillStyle = skin;
+  ctx.beginPath();
+  ctx.ellipse(cw * 0.5, ch * 0.635, cw * 0.065, ch * 0.055, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // ── Face oval ──
+  const fcx = cw * 0.5, fcy = ch * 0.355;
+  const frx = cw * 0.21, fry = ch * 0.215;
+
+  ctx.fillStyle = skin;
+  ctx.beginPath();
+  ctx.ellipse(fcx, fcy, frx, fry, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Face edge shadow
+  const fSh = ctx.createRadialGradient(fcx, fcy, frx * 0.4, fcx, fcy, frx * 1.05);
+  fSh.addColorStop(0, 'rgba(0,0,0,0)');
+  fSh.addColorStop(1, 'rgba(0,0,0,.22)');
+  ctx.fillStyle = fSh;
+  ctx.beginPath();
+  ctx.ellipse(fcx, fcy, frx, fry, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Chin patch below hole (the hole ends at HOLE_YF+HOLE_HF = 0.57*ch)
+  ctx.fillStyle = skin;
+  ctx.beginPath();
+  ctx.ellipse(cw * 0.5, ch * 0.592, cw * 0.095, ch * 0.038, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // ── Hair ──
+  const hairC = '#221208';
+  const hairSh = '#3a2010';
+
+  // Left hair mass
+  ctx.fillStyle = hairC;
+  ctx.beginPath();
+  ctx.moveTo(fcx - frx, fcy - fry * 0.4);
+  ctx.bezierCurveTo(cw * 0.18, fcy - fry * 0.15, cw * 0.14, fcy + fry * 0.5, cw * 0.16, fcy + fry * 0.95);
+  ctx.bezierCurveTo(cw * 0.20, fcy + fry * 1.1, cw * 0.30, fcy + fry * 0.85, fcx - frx * 0.82, fcy - fry * 0.72);
+  ctx.fill();
+
+  // Right hair mass
+  ctx.beginPath();
+  ctx.moveTo(fcx + frx, fcy - fry * 0.4);
+  ctx.bezierCurveTo(cw * 0.82, fcy - fry * 0.15, cw * 0.86, fcy + fry * 0.5, cw * 0.84, fcy + fry * 0.95);
+  ctx.bezierCurveTo(cw * 0.80, fcy + fry * 1.1, cw * 0.70, fcy + fry * 0.85, fcx + frx * 0.82, fcy - fry * 0.72);
+  ctx.fill();
+
+  // Top hair / head covering
+  ctx.fillStyle = '#1a0e06';
+  ctx.beginPath();
+  ctx.ellipse(fcx, fcy - fry * 0.68, frx * 0.88, fry * 0.48, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Hair highlights (subtle strands)
+  ctx.strokeStyle = hairSh;
+  ctx.lineWidth = 1 * sc;
+  [[-0.28, -0.3, -0.30, 0.6], [0.28, -0.3, 0.30, 0.6]].forEach(([dx1,dy1,dx2,dy2]) => {
+    ctx.beginPath();
+    ctx.moveTo(fcx + frx * dx1, fcy + fry * dy1);
+    ctx.quadraticCurveTo(fcx + frx * dx1 * 1.4, fcy + fry * 0.15, fcx + frx * dx2, fcy + fry * dy2);
+    ctx.stroke();
+  });
+
+  // ── Eyes (above the hole) ──
+  // Hole top = HOLE_YF * ch = 0.335 * ch
+  // Eyes at ch * 0.255 (safely above hole)
+  const eyeY = ch * 0.258;
+  const eyeOX = cw * 0.083; // horizontal offset from center
+
+  function drawEye(ex, ey) {
+    // White
+    ctx.fillStyle = skinLt;
+    ctx.beginPath();
+    ctx.ellipse(ex, ey, cw * 0.048, ch * 0.017, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Iris
+    ctx.fillStyle = '#4a3215';
+    ctx.beginPath();
+    ctx.ellipse(ex, ey, cw * 0.024, ch * 0.015, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Pupil
+    ctx.fillStyle = '#14080a';
+    ctx.beginPath();
+    ctx.ellipse(ex, ey, cw * 0.011, ch * 0.012, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Upper lid line
+    ctx.strokeStyle = '#3a2010'; ctx.lineWidth = 1.3 * sc;
+    ctx.beginPath();
+    ctx.ellipse(ex, ey - ch * 0.002, cw * 0.048, ch * 0.017, 0, Math.PI, 0);
+    ctx.stroke();
   }
-  // Canvas-drawn fallback Mona Lisa (always visible)
-  drawFallback(ctx, cw, ch);
+
+  drawEye(fcx - eyeOX, eyeY);
+  drawEye(fcx + eyeOX, eyeY);
+
+  // Barely-there brows (Mona Lisa has famously faint brows)
+  ctx.strokeStyle = 'rgba(55,35,12,.45)';
+  ctx.lineWidth = 1.4 * sc;
+  ctx.beginPath();
+  ctx.moveTo(fcx - eyeOX - cw * 0.045, eyeY - ch * 0.028);
+  ctx.quadraticCurveTo(fcx - eyeOX, eyeY - ch * 0.034, fcx - eyeOX + cw * 0.038, eyeY - ch * 0.025);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(fcx + eyeOX - cw * 0.038, eyeY - ch * 0.025);
+  ctx.quadraticCurveTo(fcx + eyeOX, eyeY - ch * 0.034, fcx + eyeOX + cw * 0.045, eyeY - ch * 0.028);
+  ctx.stroke();
+
+  // ── Label ──
+  ctx.fillStyle = 'rgba(225,185,72,.82)';
+  ctx.font = `bold ${Math.round(cw * 0.071)}px Georgia, serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.fillText('MONA LISA', cw / 2, ch * 0.978);
+
+  // ── Vignette ──
+  const vig = ctx.createRadialGradient(cw/2, ch/2, cw * 0.28, cw/2, ch/2, cw * 0.88);
+  vig.addColorStop(0, 'rgba(0,0,0,0)');
+  vig.addColorStop(1, 'rgba(0,0,0,.52)');
+  ctx.fillStyle = vig; ctx.fillRect(0, 0, cw, ch);
 }
 
-function punchHole(ctx, cw, ch) {
+// ── Draw portrait (real image or fallback) + punch hole + gold border ────────
+function drawPortraitWithHole(ctx, cw, ch) {
+  ctx.clearRect(0, 0, cw, ch);
+
+  if (portrait && portrait.complete && portrait.naturalWidth > 0) {
+    try { ctx.drawImage(portrait, 0, 0, cw, ch); }
+    catch(_) { drawFallbackPortrait(ctx, cw, ch); }
+  } else {
+    drawFallbackPortrait(ctx, cw, ch);
+  }
+
+  const sx = cw / W, sy = ch / H;
+  const hx = hole.x * sx, hy = hole.y * sy;
+  const hw = hole.w * sx, hh = hole.h * sy;
+
+  // Punch transparent hole
   ctx.save();
   ctx.globalCompositeOperation = 'destination-out';
   ctx.fillStyle = 'black';
-  rrPath(ctx, hole.x, hole.y, hole.w, hole.h, 10);
+  rrPath(ctx, hx, hy, hw, hh, 8 * sx);
   ctx.fill();
   ctx.restore();
-  // Gold border
+
+  // Gold glowing border
   ctx.save();
-  ctx.strokeStyle = 'rgba(240,192,64,.95)';
-  ctx.lineWidth   = 2.5;
-  ctx.shadowColor = '#f0c040'; ctx.shadowBlur = 16;
-  rrPath(ctx, hole.x, hole.y, hole.w, hole.h, 10);
+  ctx.strokeStyle = 'rgba(240,192,64,.92)';
+  ctx.lineWidth = 2.5;
+  ctx.shadowColor = '#f0c040'; ctx.shadowBlur = 14;
+  rrPath(ctx, hx, hy, hw, hh, 8 * sx);
   ctx.stroke();
   ctx.restore();
-}
-
-function drawPortraitWithHole(ctx, cw, ch) {
-  drawPortraitLayer(ctx, cw, ch);
-  punchHole(ctx, cw, ch);
-}
-
-// ── Canvas-drawn fallback portrait (programmatic Mona Lisa) ─────────────────
-function drawFallback(ctx, cw, ch) {
-  const { s, ox, oy } = coverXform(cw, ch);
-  // Work in image-coordinate space, then transform
-  ctx.save();
-  ctx.translate(ox, oy); ctx.scale(s, s);
-  _drawFallbackAtNative(ctx);
-  ctx.restore();
-}
-
-function _drawFallbackAtNative(ctx) {
-  // Drawing in 402×602 coordinate space
-  const W = 402, H = 602;
-
-  // Background – warm aged canvas
-  const bg = ctx.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0,   '#524128'); bg.addColorStop(.45,'#6a4e2c'); bg.addColorStop(1,'#2a1a08');
-  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-
-  // Landscape hills
-  ctx.fillStyle = '#3d5a48';
-  ctx.beginPath(); ctx.moveTo(0,290); ctx.quadraticCurveTo(60,140,130,220); ctx.lineTo(130,H); ctx.lineTo(0,H); ctx.fill();
-  ctx.fillStyle = '#2d4a38';
-  ctx.beginPath(); ctx.moveTo(W,310); ctx.quadraticCurveTo(345,150,275,225); ctx.lineTo(275,H); ctx.lineTo(W,H); ctx.fill();
-  const sky = ctx.createLinearGradient(0,0,0,220);
-  sky.addColorStop(0,'rgba(50,75,90,.7)'); sky.addColorStop(1,'rgba(50,75,90,0)');
-  ctx.fillStyle = sky; ctx.fillRect(0,0,W,220);
-
-  // Body / dark dress (lower 55 %)
-  ctx.fillStyle = '#2c3320';
-  ctx.beginPath();
-  ctx.moveTo(0,H); ctx.lineTo(W,H); ctx.lineTo(380,385);
-  ctx.bezierCurveTo(330,325,265,328,235,375);
-  ctx.bezierCurveTo(225,402,200,402,168,375);
-  ctx.bezierCurveTo(140,328, 75,325, 25,385);
-  ctx.closePath(); ctx.fill();
-
-  // Neck
-  ctx.fillStyle = '#c09060';
-  ctx.beginPath(); ctx.ellipse(201,385,26,34,0,0,Math.PI*2); ctx.fill();
-
-  // Face oval centred at (201, 214)
-  ctx.fillStyle = '#c09060';
-  ctx.beginPath(); ctx.ellipse(201,214,84,130,0,0,Math.PI*2); ctx.fill();
-  const fsh = ctx.createRadialGradient(201,214,34,201,214,88);
-  fsh.addColorStop(0,'rgba(0,0,0,0)'); fsh.addColorStop(1,'rgba(0,0,0,.22)');
-  ctx.fillStyle = fsh;
-  ctx.beginPath(); ctx.ellipse(201,214,84,130,0,0,Math.PI*2); ctx.fill();
-
-  // Chin patch below hole (hole bottom ≈ HOLE_YF+HOLE_HF = 0.515 * 602 ≈ 310)
-  ctx.fillStyle = '#c09060';
-  ctx.beginPath(); ctx.ellipse(201,332,38,20,0,0,Math.PI*2); ctx.fill();
-
-  // Hair – left
-  ctx.fillStyle = '#221208';
-  ctx.beginPath();
-  ctx.moveTo(118,188); ctx.bezierCurveTo(68,158,55,270,65,355);
-  ctx.bezierCurveTo(82,400,125,385,148,340);
-  ctx.bezierCurveTo(135,290,124,235,118,188); ctx.fill();
-  // Hair – right
-  ctx.beginPath();
-  ctx.moveTo(285,188); ctx.bezierCurveTo(338,158,350,270,340,355);
-  ctx.bezierCurveTo(322,400,278,385,256,340);
-  ctx.bezierCurveTo(270,290,280,235,285,188); ctx.fill();
-  // Hair – top / veil
-  ctx.fillStyle = '#1a0e06';
-  ctx.beginPath(); ctx.ellipse(201,105,88,70,0,0,Math.PI*2); ctx.fill();
-
-  // Eyes – above hole (hole top ≈ HOLE_YF*602 = 211)
-  // Eyes at y≈163 (safely above hole)
-  function eye(ex, ey) {
-    ctx.fillStyle = '#d4a878'; ctx.beginPath(); ctx.ellipse(ex,ey,20,7,0,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#4a3215'; ctx.beginPath(); ctx.ellipse(ex,ey,10,6,0,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#14080a'; ctx.beginPath(); ctx.ellipse(ex,ey,4,5,0,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle = '#3a2010'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.ellipse(ex,ey-1,20,7,0,Math.PI,0); ctx.stroke();
-  }
-  eye(168, 163); eye(234, 163);
-
-  // Faint brows (Mona Lisa is famous for having almost no brows)
-  ctx.strokeStyle = 'rgba(55,32,10,.4)'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(145,148); ctx.quadraticCurveTo(168,143,188,148); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(214,148); ctx.quadraticCurveTo(234,143,258,148); ctx.stroke();
-
-  // Label
-  ctx.fillStyle = 'rgba(225,185,72,.82)';
-  ctx.font = 'bold 22px Georgia, serif';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-  ctx.fillText('MONA LISA', 201, 594);
-
-  // Vignette
-  const vig = ctx.createRadialGradient(201,301,100,201,301,260);
-  vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(1,'rgba(0,0,0,.55)');
-  ctx.fillStyle = vig; ctx.fillRect(0,0,W,H);
 }
 
 // ═══════════════════════════════════════════════════════
 //  GUIDE OVERLAY
 // ═══════════════════════════════════════════════════════
-function drawGuide(nosePos, mouthPos, nOk, mOk, noFace) {
-  gCtx.clearRect(0, 0, gCanvas.width, gCanvas.height);
-  const pulse = .5 + .5 * Math.sin(Date.now() / 380);
+function drawGuide(nosePos, mouthPos, noseOk, mouthOk, noFace) {
+  gCtx.clearRect(0, 0, W, H);
+  const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 400);
 
   function crosshair(x, y, ok) {
     const col = ok
-      ? `rgba(80,255,80,${.6+.4*pulse})`
-      : `rgba(240,192,64,${.45+.45*pulse})`;
+      ? `rgba(80,255,80,${.65 + .35 * pulse})`
+      : `rgba(240,192,64,${.45 + .45 * pulse})`;
     gCtx.save();
-    gCtx.strokeStyle = col; gCtx.lineWidth = 2;
+    gCtx.strokeStyle = col; gCtx.lineWidth = 1.8;
     gCtx.shadowColor = ok ? '#80ff80' : '#f0c040';
-    gCtx.shadowBlur  = ok ? 16 : 10;
-    gCtx.beginPath(); gCtx.arc(x, y, 9, 0, Math.PI*2); gCtx.stroke();
+    gCtx.shadowBlur  = ok ? 14 : 9;
+    gCtx.beginPath(); gCtx.arc(x, y, 7, 0, Math.PI * 2); gCtx.stroke();
     gCtx.beginPath();
-    [[-18,-15],[-14,-19],[14,-19],[18,-15],[18,15],[14,19],[-14,19],[-18,15]]
-      .forEach(([dx,dy],i) => { if(i%2===0) gCtx.moveTo(x+dx,y+dy); else gCtx.lineTo(x+dx,y+dy); });
+    [[-14,-12],[-12,-14],[12,-14],[14,-12],[14,12],[12,14],[-12,14],[-14,12]]
+      .forEach(([dx, dy], i) => { if (i % 2 === 0) gCtx.moveTo(x+dx, y+dy); else gCtx.lineTo(x+dx, y+dy); });
     gCtx.stroke();
     gCtx.restore();
   }
 
-  crosshair(hole.noseTgt.x, hole.noseTgt.y, nOk);
-  crosshair(hole.mouthTgt.x, hole.mouthTgt.y, mOk);
+  crosshair(hole.noseTgt.x,  hole.noseTgt.y,  noseOk);
+  crosshair(hole.mouthTgt.x, hole.mouthTgt.y, mouthOk);
 
   if (!noFace) {
     const dot = (pos, ok) => {
       if (!pos) return;
       gCtx.save();
-      gCtx.beginPath(); gCtx.arc(pos.x, pos.y, 6, 0, Math.PI*2);
-      gCtx.fillStyle  = ok ? 'rgba(80,255,80,.88)' : 'rgba(255,70,70,.78)';
-      gCtx.shadowColor= ok ? '#80ff80' : '#ff4646'; gCtx.shadowBlur = 12;
+      gCtx.beginPath(); gCtx.arc(pos.x, pos.y, 5, 0, Math.PI * 2);
+      gCtx.fillStyle = ok ? 'rgba(80,255,80,.85)' : 'rgba(255,80,80,.75)';
+      gCtx.shadowColor = ok ? '#80ff80' : '#ff5050'; gCtx.shadowBlur = 10;
       gCtx.fill(); gCtx.restore();
     };
-    dot(nosePos, nOk); dot(mouthPos, mOk);
+    dot(nosePos, noseOk); dot(mouthPos, mouthOk);
 
-    if (nOk && mOk) {
+    if (noseOk && mouthOk) {
       gCtx.save();
-      gCtx.strokeStyle = `rgba(80,255,80,${.4+.6*pulse})`;
-      gCtx.lineWidth = 3.5; gCtx.shadowColor = '#80ff80'; gCtx.shadowBlur = 24;
-      rrPath(gCtx, hole.x+4, hole.y+4, hole.w-8, hole.h-8, 9);
+      gCtx.strokeStyle = `rgba(80,255,80,${.45 + .55 * pulse})`;
+      gCtx.lineWidth = 3; gCtx.shadowColor = '#80ff80'; gCtx.shadowBlur = 20;
+      rrPath(gCtx, hole.x + 3, hole.y + 3, hole.w - 6, hole.h - 6, 7);
       gCtx.stroke(); gCtx.restore();
     }
   }
 }
 
 // ═══════════════════════════════════════════════════════
-//  FACE DETECTION
+//  FACE DETECTION (runs every ~110 ms)
 // ═══════════════════════════════════════════════════════
 async function detect() {
   if (!detecting || winDone) return;
-  const PW = procCanvas.width, PH = procCanvas.height;
 
-  // Mirrored video → proc canvas
+  // Mirror video onto proc canvas
   procCtx.save();
-  procCtx.translate(PW, 0); procCtx.scale(-1, 1);
-  procCtx.drawImage(videoEl, 0, 0, PW, PH);
+  procCtx.translate(W, 0); procCtx.scale(-1, 1);
+  procCtx.drawImage(videoEl, 0, 0, W, H);
   procCtx.restore();
 
   try {
     const det = await faceapi
       .detectSingleFace(procCanvas, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.35 }))
-      .withFaceLandmarks(true);
+      .withFaceLandmarks(true);   // true = use tiny landmark model
 
     if (!det) {
       drawGuide(null, null, false, false, true);
-      push(0); setProgress(avg());
-      statusText.textContent = '👆 Di chuyển mặt vào ô vàng…';
+      push(0);
+      statusText.textContent = '👆 Di chuyển mặt vào ô trống…';
+      setProgress(avg());
       return;
     }
 
     const pts = det.landmarks.positions;
+    // 68-point model: 30 = nose tip, 48/54 = mouth corners, 51/57 = mouth top/bottom
     const nosePos  = pts[30];
-    const mouthPos = { x:(pts[48].x+pts[54].x)/2, y:(pts[51].y+pts[57].y)/2 };
+    const mouthPos = {
+      x: (pts[48].x + pts[54].x) / 2,
+      y: (pts[51].y + pts[57].y) / 2,
+    };
 
-    const nd  = dist(nosePos,  hole.noseTgt);
-    const md  = dist(mouthPos, hole.mouthTgt);
-    const nOk = nd < hole.tol;
-    const mOk = md < hole.tol;
+    const nd   = dist(nosePos,  hole.noseTgt);
+    const md   = dist(mouthPos, hole.mouthTgt);
+    const nOk  = nd < hole.tol;
+    const mOk  = md < hole.tol;
 
     drawGuide(nosePos, mouthPos, nOk, mOk, false);
-    push(sc(nd)*.5 + sc(md)*.5);
+    push(score(nd) * 0.5 + score(md) * 0.5);
     const a = avg();
     setProgress(a);
 
     statusText.textContent =
-      nOk && mOk ? '🎯 Giữ nguyên…' :
-      nOk || mOk ? '📐 Gần rồi! Điều chỉnh thêm' :
-                   '👆 Di chuyển mặt vào ô vàng…';
+      nOk && mOk  ? '🎯 Giữ nguyên…' :
+      nOk || mOk  ? '📐 Gần rồi! Điều chỉnh thêm' :
+                    '👆 Di chuyển mặt vào ô trống…';
 
-    if (a >= WIN_THRESH && alignBuf.length >= Math.floor(BUFFER_SIZE * .85)) triggerWin();
-  } catch (_) {}
+    if (a >= WIN_THRESH && alignBuf.length >= Math.floor(BUFFER_SIZE * 0.85)) {
+      triggerWin();
+    }
+  } catch (_) { /* ignore single-frame errors */ }
 }
 
-const dist = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
-const sc   = d    => Math.max(0, 1 - d/(hole.tol*2.5));
-const push = v    => { alignBuf.push(v); if(alignBuf.length>BUFFER_SIZE) alignBuf.shift(); };
-const avg  = ()   => alignBuf.length ? alignBuf.reduce((a,b)=>a+b,0)/alignBuf.length : 0;
-const setProgress = f => { progressFill.style.width = Math.min(100,f*100)+'%'; };
-
-// ═══════════════════════════════════════════════════════
-//  GUIDE ANIMATION LOOP
-// ═══════════════════════════════════════════════════════
-function guideLoop() {
-  if (!detecting) return;
-  drawPortraitWithHole(pCtx, pCanvas.width, pCanvas.height);
-  guideRAF = requestAnimationFrame(guideLoop);
-}
+const dist  = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const score = d  => Math.max(0, 1 - d / (hole.tol * 2.5));
+const push  = v  => { alignBuf.push(v); if (alignBuf.length > BUFFER_SIZE) alignBuf.shift(); };
+const avg   = () => alignBuf.length ? alignBuf.reduce((a,b) => a+b, 0) / alignBuf.length : 0;
+const setProgress = f => { progressFill.style.width = Math.min(100, f * 100) + '%'; };
 
 // ═══════════════════════════════════════════════════════
 //  WIN SEQUENCE
@@ -620,118 +623,147 @@ async function triggerWin() {
   winDone = true; detecting = false;
   clearInterval(detectTimer); cancelAnimationFrame(guideRAF);
 
-  // Freeze mirrored camera frame
+  // Freeze current mirrored frame
   const frozen = document.createElement('canvas');
-  frozen.width = pCanvas.width; frozen.height = pCanvas.height;
+  frozen.width = W; frozen.height = H;
   const fCtx = frozen.getContext('2d');
-  fCtx.save(); fCtx.translate(frozen.width,0); fCtx.scale(-1,1);
-  fCtx.drawImage(videoEl, 0, 0, frozen.width, frozen.height);
-  fCtx.restore();
+  fCtx.save(); fCtx.translate(W, 0); fCtx.scale(-1, 1);
+  fCtx.drawImage(videoEl, 0, 0, W, H); fCtx.restore();
 
-  if (mediaStream) mediaStream.getTracks().forEach(t=>t.stop());
+  // Stop camera
+  if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
 
-  // Show win canvas (fullscreen) and hide game canvas
-  winCanvas.classList.remove('hidden');
-  winCanvas.width  = pCanvas.width;
-  winCanvas.height = pCanvas.height;
-
+  gameScreen.classList.add('hidden');
+  winScreen.classList.remove('hidden');
+  await sleep(60);
   await animateReveal(frozen);
 }
 
 async function animateReveal(frozen) {
-  const CW = winCanvas.width, CH = winCanvas.height;
-  spawnSparks(40);
-  await sleep(260);
+  const STEPS = 48;
+  spawnSparks(35, winCanvas);
+  await sleep(280);
 
-  const STEPS = 50;
+  const drawPortraitFull = (ctx) => {
+    if (portrait && portrait.complete && portrait.naturalWidth > 0) {
+      try { ctx.drawImage(portrait, 0, 0, W, H); return; } catch(_) {}
+    }
+    drawFallbackPortrait(ctx, W, H);
+  };
+
   for (let i = 0; i <= STEPS; i++) {
     const t = eio(i / STEPS);
-    winCtx.clearRect(0, 0, CW, CH);
-    drawPortraitLayer(winCtx, CW, CH);     // full portrait (no hole)
+    winCtx.clearRect(0, 0, W, H);
+    drawPortraitFull(winCtx);
 
-    // Face fading out of hole area
-    const fα = Math.max(0, 1 - t * 1.5);
+    // Frozen face fades out of the hole
+    const fα = Math.max(0, 1 - t * 1.55);
     if (fα > 0) {
       winCtx.save(); winCtx.globalAlpha = fα;
       winCtx.drawImage(frozen, hole.x, hole.y, hole.w, hole.h, hole.x, hole.y, hole.w, hole.h);
       winCtx.restore();
     }
+
     // Golden shimmer fills hole
-    if (t > 0.2) {
-      const sα = Math.min(1,(t-.2)/.55) * .6;
+    if (t > 0.25) {
+      const sα = Math.min(1, (t - 0.25) / 0.55) * 0.55;
       winCtx.save();
-      const g = winCtx.createRadialGradient(hole.cx,hole.cy,0, hole.cx,hole.cy,hole.w*.7);
-      g.addColorStop(0,`rgba(255,230,100,${sα})`); g.addColorStop(1,'rgba(240,100,20,0)');
+      const g = winCtx.createRadialGradient(hole.cx, hole.cy, 0, hole.cx, hole.cy, hole.w * 0.65);
+      g.addColorStop(0, `rgba(255,230,100,${sα})`);
+      g.addColorStop(1, 'rgba(240,100,20,0)');
       winCtx.fillStyle = g;
-      rrPath(winCtx, hole.x, hole.y, hole.w, hole.h, 10);
+      rrPath(winCtx, hole.x, hole.y, hole.w, hole.h, 8);
       winCtx.fill(); winCtx.restore();
     }
-    if (i % 6 === 0) spawnSparks(5);
-    await sleep(20);
+
+    if (i % 7 === 0) spawnSparks(5, winCanvas);
+    await sleep(22);
   }
 
-  // Final: clean full portrait
-  winCtx.clearRect(0, 0, CW, CH);
-  drawPortraitLayer(winCtx, CW, CH);
-  winCtx.save(); winCtx.globalAlpha = .1;
-  winCtx.fillStyle = '#f0c040'; winCtx.fillRect(0,0,CW,CH);
+  // Final clean portrait + subtle gold veil
+  winCtx.clearRect(0, 0, W, H);
+  drawPortraitFull(winCtx);
+  winCtx.save(); winCtx.globalAlpha = 0.11;
+  winCtx.fillStyle = '#f0c040'; winCtx.fillRect(0, 0, W, H);
   winCtx.restore();
 
-  spawnSparks(60);
+  spawnSparks(55, winCanvas);
 
-  // Show message at top/center
-  await sleep(300);
+  await sleep(320);
   winMsg.innerHTML =
-    `😱 Ôi trời! Bạn có thật là<br>` +
-    `<span style="color:gold;font-style:italic;font-size:1.1em">${CHARACTER}</span><br>` +
-    `không vậy?!<br>` +
-    `<span style="font-size:.75em;color:rgba(255,220,80,.8)">✨ Nụ cười bí ẩn đó… chính là của bạn!</span><br>` +
-    `<span style="font-size:.7em;color:rgba(255,200,60,.65)">🎨 Leonardo đã vẽ bạn từ 500 năm trước!</span>`;
-  $('win-msg-wrap').classList.remove('hidden');
-  $('again-wrap').classList.remove('hidden');
+    `😱 Ôi trời! Bạn có thật là <span style="color:gold;font-style:italic">${CHARACTER}</span> không vậy?!<br>` +
+    `<span style="font-size:.8em;color:rgba(255,220,80,.85)">✨ Nụ cười huyền bí đó… đích thực là của bạn rồi!</span><br>` +
+    `<span style="font-size:.7em;color:rgba(255,200,60,.7)">🎨 Phải chăng Leonardo đã vẽ bạn từ 500 năm trước?</span>`;
 
-  for (let i = 0; i < 4; i++) { await sleep(350); spawnSparks(22); }
+  for (let i = 0; i < 4; i++) { await sleep(320); spawnSparks(18, winCanvas); }
 }
+
+const eio   = t => t < .5 ? 2*t*t : -1 + (4 - 2*t)*t;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // ═══════════════════════════════════════════════════════
 //  PARTICLES
 // ═══════════════════════════════════════════════════════
-const SPARK_COLORS = ['#f0c040','#ff6b6b','#6bdcff','#c040f0','#40ff90','#fff','#ffa040','#ff40a0'];
+const COLORS = ['#f0c040','#ff6b6b','#6bdcff','#c040f0','#40ff90','#fff','#ffa040','#ff40a0'];
 
-function spawnSparks(n) {
-  const cx = innerWidth/2, cy = innerHeight/2;
+function spawnSparks(n, anchor) {
+  const r = anchor.getBoundingClientRect();
+  const cx = r.left + r.width / 2 + scrollX;
+  const cy = r.top  + r.height / 2 + scrollY;
+
   for (let i = 0; i < n; i++) {
     const el  = document.createElement('div');
     el.className = 'spark';
     const sz  = 5 + Math.random() * 9;
     const ang = Math.random() * Math.PI * 2;
-    const rad = 80 + Math.random() * Math.max(innerWidth, innerHeight) * 0.55;
-    const dur = .9 + Math.random() * 1.3;
+    const rad = 60 + Math.random() * 260;
+    const dur = 0.8 + Math.random() * 1.2;
     Object.assign(el.style, {
-      left:   (cx + (Math.random()-.5)*innerWidth*.8)+'px',
-      top:    (cy + (Math.random()-.5)*innerHeight*.5)+'px',
-      width:  sz+'px', height: sz+'px',
-      background: SPARK_COLORS[Math.random()*SPARK_COLORS.length|0],
-      '--tx': (Math.cos(ang)*rad)+'px',
-      '--ty': (Math.sin(ang)*rad - 60 - Math.random()*140)+'px',
-      animationDuration: dur+'s',
-      animationDelay: (Math.random()*.25)+'s',
+      left: (cx + (Math.random() - .5) * 280) + 'px',
+      top:  (cy + (Math.random() - .5) * 180) + 'px',
+      width: sz + 'px', height: sz + 'px',
+      background: COLORS[Math.random() * COLORS.length | 0],
+      '--tx': (Math.cos(ang) * rad) + 'px',
+      '--ty': (Math.sin(ang) * rad - 80 - Math.random() * 120) + 'px',
+      animationDuration: dur + 's',
+      animationDelay:    (Math.random() * .2) + 's',
     });
     document.body.appendChild(el);
-    setTimeout(()=>el.remove(), (dur+.25)*1000+250);
+    setTimeout(() => el.remove(), (dur + .2) * 1000 + 200);
   }
 }
 
-const eio   = t => t<.5 ? 2*t*t : -1+(4-2*t)*t;
-const sleep = ms => new Promise(r=>setTimeout(r,ms));
+// ═══════════════════════════════════════════════════════
+//  STARFIELD
+// ═══════════════════════════════════════════════════════
+function initStars() {
+  const c = $('starfield');
+  const resize = () => { c.width = innerWidth; c.height = innerHeight; };
+  resize(); window.addEventListener('resize', resize);
+  const ctx = c.getContext('2d');
+  const stars = Array.from({length: 160}, () => ({
+    x: Math.random() * c.width, y: Math.random() * c.height,
+    r: .2 + Math.random() * 1.5, s: Math.random() * Math.PI * 2,
+    sp: .003 + Math.random() * .008,
+  }));
+  (function draw() {
+    ctx.clearRect(0, 0, c.width, c.height);
+    stars.forEach(s => {
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255,255,220,${.25 + .75 * (.5 + .5 * Math.sin(s.s))})`;
+      ctx.fill(); s.s += s.sp;
+    });
+    requestAnimationFrame(draw);
+  })();
+}
 
 // ═══════════════════════════════════════════════════════
-//  LOADING EDGE BORDER
+//  GUIDE ANIMATION LOOP
 // ═══════════════════════════════════════════════════════
-function showEdges(on) {
-  ['edge-top','edge-bottom','edge-left','edge-right'].forEach(id => {
-    $(id).classList.toggle('active', on);
-  });
+function guideLoop() {
+  if (!detecting) return;
+  drawPortraitWithHole(pCtx, W, H);
+  guideRAF = requestAnimationFrame(guideLoop);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -740,32 +772,27 @@ function showEdges(on) {
 async function startGame() {
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode:'user', width:{ideal:1280}, height:{ideal:720} }
+      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
     });
     videoEl.srcObject = mediaStream;
     await new Promise(r => { videoEl.onloadedmetadata = r; });
     await videoEl.play();
-  } catch(e) {
-    alert('Không thể truy cập camera 😢\n'+e.message);
+  } catch (e) {
+    alert('Không thể truy cập camera 😢\n' + e.message);
     return;
   }
 
   winDone = false; detecting = false;
   alignBuf = [];
   progressFill.style.width = '0%';
-  statusText.textContent = '👆 Di chuyển mặt vào ô vàng…';
+  statusText.textContent = '👆 Di chuyển mặt vào ô trống…';
   winMsg.innerHTML = '';
 
-  $('start-overlay').classList.add('hidden');
-  $('win-msg-wrap').classList.add('hidden');
-  $('again-wrap').classList.add('hidden');
-  winCanvas.classList.add('hidden');
+  introScreen.classList.add('hidden');
+  winScreen.classList.add('hidden');
+  gameScreen.classList.remove('hidden');
 
-  // Switch top UI to HUD
-  $('title-pill').style.display = 'block';
-  $('hud').style.display = 'flex';
-
-  // Start loops
+  drawPortraitWithHole(pCtx, W, H);
   detecting = true;
   guideLoop();
   detectTimer = setInterval(detect, 110);
@@ -775,44 +802,44 @@ async function startGame() {
 //  BOOT
 // ═══════════════════════════════════════════════════════
 async function boot() {
-  resize();
-  window.addEventListener('resize', () => { resize(); drawPortraitWithHole(pCtx, pCanvas.width, pCanvas.height); });
+  initStars();
+  computeHole();
 
-  // Draw fallback portrait immediately so screen isn't blank
-  drawPortraitWithHole(pCtx, pCanvas.width, pCanvas.height);
-  showEdges(true);
-
-  // 1 · Load real portrait via blob URL (avoids canvas CORS taint)
-  $('loading-pill').textContent = 'Đang tải chân dung huyền bí… 🖼️';
+  // 1 · Load portrait via fetch → blob URL (bypasses all canvas CORS issues)
+  $('load-text').textContent = 'Đang tải chân dung huyền bí… 🖼️';
   try {
     const resp = await fetch(PORTRAIT_SRC);
-    if (!resp.ok) throw new Error('HTTP '+resp.status);
-    const blob = await resp.blob();
-    portrait   = new Image();
-    portrait.src = URL.createObjectURL(blob);
-    await new Promise((res,rej)=>{ portrait.onload=res; portrait.onerror=rej; });
-    imgNW = portrait.naturalWidth || 402;
-    imgNH = portrait.naturalHeight || 602;
-    computeHole();
-    drawPortraitWithHole(pCtx, pCanvas.width, pCanvas.height); // upgrade to real image
-  } catch(e) {
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const blob    = await resp.blob();
+    const blobURL = URL.createObjectURL(blob);
+    portrait = new Image();
+    await new Promise((res, rej) => {
+      portrait.onload  = res;
+      portrait.onerror = rej;
+      portrait.src = blobURL;
+    });
+    // blob URL is same-origin → drawImage to canvas is always safe ✓
+  } catch (e) {
+    // Fallback portrait (programmatic) will be used – no crash
     console.warn('Portrait fetch failed, using canvas fallback:', e.message);
     portrait = null;
   }
 
   // 2 · Load AI models
-  $('loading-pill').textContent = 'Đang nạp trí tuệ nhân tạo… 🤖';
+  $('load-text').textContent = 'Đang nạp trí tuệ nhân tạo… 🤖';
   try {
     await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
     await faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL);
-  } catch(e) {
-    throw new Error('Không tải được AI model. Kiểm tra kết nối mạng.\n'+e.message);
+  } catch (e) {
+    throw new Error('Không tải được model AI. Kiểm tra kết nối mạng.\n' + e.message);
   }
 
-  // 3 · Ready → stop edge loader, show start overlay
-  showEdges(false);
-  $('loading-pill').classList.add('hidden');
-  $('start-overlay').classList.remove('hidden');
+  // 3 · Draw intro preview
+  drawPortraitWithHole(prevCtx, 140, 210);
+
+  // 4 · Show intro
+  loadingScreen.classList.add('hidden');
+  introScreen.classList.remove('hidden');
 }
 
 // ═══════════════════════════════════════════════════════
@@ -820,18 +847,8 @@ async function boot() {
 // ═══════════════════════════════════════════════════════
 $('start-btn').addEventListener('click', startGame);
 $('again-btn').addEventListener('click', () => {
-  $('win-msg-wrap').classList.add('hidden');
-  $('again-wrap').classList.add('hidden');
-  winCanvas.classList.add('hidden');
-  $('title-pill').style.display = 'none';
-  $('hud').style.display = 'none';
-  $('loading-pill').classList.remove('hidden');
-  $('loading-pill').textContent = '✨ Sẵn sàng chơi lại!';
-  setTimeout(()=>{
-    $('loading-pill').classList.add('hidden');
-    $('start-overlay').classList.remove('hidden');
-    drawPortraitWithHole(pCtx, pCanvas.width, pCanvas.height);
-  }, 600);
+  winScreen.classList.add('hidden');
+  introScreen.classList.remove('hidden');
 });
 
 // ═══════════════════════════════════════════════════════
@@ -839,9 +856,10 @@ $('again-btn').addEventListener('click', () => {
 // ═══════════════════════════════════════════════════════
 boot().catch(err => {
   console.error('Boot error:', err);
-  showEdges(false);
-  $('loading-pill').textContent = '❌ ' + err.message;
-  $('loading-pill').style.color = '#ff8080';
+  $('loading-screen').innerHTML = `
+    <p style="color:#ff8080;font-size:1.05em">Lỗi khởi động game 😢</p>
+    <p style="color:rgba(255,255,255,.45);font-size:.78em;margin:10px 20px;text-align:center">${err.message}</p>
+    <button onclick="location.reload()" style="margin-top:18px;padding:10px 28px;background:linear-gradient(135deg,#f0c040,#e8830a);border:none;border-radius:999px;cursor:pointer;font-weight:bold;color:#1a0800">🔄 Thử lại</button>`;
 });
 </script>
 </body>
