@@ -1016,68 +1016,99 @@ async function animateReveal(frozen) {
   for (let i = 0; i < 4; i++) { await sleep(350); spawnSparks(22); }
 }
 
-// Build the portrait composite: full portrait with the player's color-graded,
-// feather-masked face blended seamlessly into the hole region.
+// Build the portrait composite: full portrait as background, player's face
+// color-graded + partially transparent so the two images melt into each other,
+// finished with a painted-texture overlay sampled from the portrait itself.
 function buildComposite(frozen, CW, CH) {
-  // ── 1. Result canvas: full portrait, no hole ────────────────────────────────
+  // ── 1. Base: full portrait (no hole) ────────────────────────────────────────
   const cCanvas = document.createElement('canvas');
   cCanvas.width = CW; cCanvas.height = CH;
   const cCtx = cCanvas.getContext('2d');
   drawPortraitLayer(cCtx, CW, CH);
 
-  // ── 2. Extract hole patch with padding ──────────────────────────────────────
-  const PAD = 14;
+  // ── 2. Patch region (hole + generous padding for soft edge) ─────────────────
+  const PAD = 20;
   const sx  = Math.max(0, Math.floor(hole.x - PAD));
   const sy  = Math.max(0, Math.floor(hole.y - PAD));
   const sw  = Math.min(CW, Math.ceil(hole.x + hole.w + PAD)) - sx;
   const sh  = Math.min(CH, Math.ceil(hole.y + hole.h + PAD)) - sy;
+  const mcx = hole.cx - sx;
+  const mcy = hole.cy - sy;
 
-  // ── 3. Apply portrait-style filter to player face ───────────────────────────
+  // ── 3. Color-grade player face to match portrait palette ────────────────────
   const faceCanvas = document.createElement('canvas');
   faceCanvas.width = sw; faceCanvas.height = sh;
   const fCtx = faceCanvas.getContext('2d');
 
-  fCtx.filter = 'sepia(0.38) saturate(0.74) brightness(0.88) contrast(0.92)';
+  // Stronger desaturation + warm sepia to match 500-year-old painting tones
+  fCtx.filter = 'sepia(0.52) saturate(0.58) brightness(0.82) contrast(0.88) hue-rotate(-4deg)';
   fCtx.drawImage(frozen, sx, sy, sw, sh, 0, 0, sw, sh);
   fCtx.filter = 'none';
 
-  // ── 4. Warm amber multiply overlay (shifts skin tones toward portrait palette) ─
+  // Warm brown-amber tint (closer to Mona Lisa shadow palette)
   fCtx.globalCompositeOperation = 'multiply';
-  fCtx.fillStyle = 'rgba(205, 148, 58, 0.26)';
+  fCtx.fillStyle = 'rgba(172, 118, 38, 0.32)';
   fCtx.fillRect(0, 0, sw, sh);
   fCtx.globalCompositeOperation = 'source-over';
 
-  // ── 5. Radial feather mask: opaque center → transparent at patch edges ───────
+  // ── 4. Radial feather mask: wider + softer falloff than before ───────────────
   const maskCanvas = document.createElement('canvas');
   maskCanvas.width = sw; maskCanvas.height = sh;
   const mCtx = maskCanvas.getContext('2d');
-
-  const mcx     = hole.cx - sx;
-  const mcy     = hole.cy - sy;
-  const innerR  = Math.min(hole.w, hole.h) * 0.22;
-  const outerR  = Math.max(hole.w, hole.h) * 0.60 + PAD;
+  const innerR = Math.min(hole.w, hole.h) * 0.20;
+  const outerR = Math.max(hole.w, hole.h) * 0.76 + PAD;
   const feather = mCtx.createRadialGradient(mcx, mcy, innerR, mcx, mcy, outerR);
   feather.addColorStop(0,    'rgba(0,0,0,1)');
-  feather.addColorStop(0.75, 'rgba(0,0,0,0.97)');
+  feather.addColorStop(0.58, 'rgba(0,0,0,0.96)');
+  feather.addColorStop(0.82, 'rgba(0,0,0,0.48)');
   feather.addColorStop(1,    'rgba(0,0,0,0)');
   mCtx.fillStyle = feather;
   mCtx.fillRect(0, 0, sw, sh);
-
   fCtx.globalCompositeOperation = 'destination-in';
   fCtx.drawImage(maskCanvas, 0, 0);
   fCtx.globalCompositeOperation = 'source-over';
 
-  // ── 6. Composite styled face into portrait ──────────────────────────────────
+  // ── 5. Blend face at ~82 % opacity — portrait background bleeds through ──────
+  cCtx.globalAlpha = 0.82;
   cCtx.drawImage(faceCanvas, sx, sy);
+  cCtx.globalAlpha = 1.0;
 
-  // ── 7. Subtle seam vignette: darkens the transition ring slightly ────────────
+  // ── 6. Portrait painted-texture overlay: shadows/brushwork from the painting ─
+  // Darkened grayscale of the portrait face multiplied onto the player face
+  // makes skin look "painted", picking up the old-master shadow contours.
+  if (portrait && portrait.complete && portrait.naturalWidth > 0) {
+    try {
+      const { s, ox, oy } = coverXform(CW, CH);
+      const texCanvas = document.createElement('canvas');
+      texCanvas.width = sw; texCanvas.height = sh;
+      const tCtx = texCanvas.getContext('2d');
+      tCtx.filter = 'saturate(0.08) brightness(0.50) contrast(1.65)';
+      tCtx.drawImage(portrait,
+        (sx - ox) / s, (sy - oy) / s, sw / s, sh / s,
+        0, 0, sw, sh);
+      tCtx.filter = 'none';
+      // Apply same feather mask so texture stays within the blended area
+      tCtx.globalCompositeOperation = 'destination-in';
+      tCtx.drawImage(maskCanvas, 0, 0);
+      tCtx.globalCompositeOperation = 'source-over';
+      // Multiply onto composite — light portrait areas preserve face, dark
+      // areas (shadows, contours) naturally darken corresponding face regions
+      cCtx.globalCompositeOperation = 'multiply';
+      cCtx.globalAlpha = 0.30;
+      cCtx.drawImage(texCanvas, sx, sy);
+      cCtx.globalCompositeOperation = 'source-over';
+      cCtx.globalAlpha = 1.0;
+    } catch (_) {}
+  }
+
+  // ── 7. Seam vignette: darkens the transition ring slightly ───────────────────
   const vigCanvas = document.createElement('canvas');
   vigCanvas.width = sw; vigCanvas.height = sh;
   const vCtx = vigCanvas.getContext('2d');
-  const vig  = vCtx.createRadialGradient(mcx, mcy, innerR * 1.2, mcx, mcy, outerR);
+  const vig = vCtx.createRadialGradient(mcx, mcy, innerR * 1.4, mcx, mcy, outerR * 0.92);
   vig.addColorStop(0,    'rgba(0,0,0,0)');
-  vig.addColorStop(0.68, 'rgba(0,0,0,0)');
-  vig.addColorStop(0.84, 'rgba(0,0,0,0.32)');
+  vig.addColorStop(0.70, 'rgba(0,0,0,0)');
+  vig.addColorStop(0.86, 'rgba(0,0,0,0.28)');
   vig.addColorStop(1,    'rgba(0,0,0,0)');
   vCtx.fillStyle = vig;
   vCtx.fillRect(0, 0, sw, sh);
