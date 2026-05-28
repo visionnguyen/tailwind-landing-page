@@ -250,8 +250,7 @@ const prevCtx = prevCanvas.getContext('2d');
 // ═══════════════════════════════════════════════════════
 //  STATE
 // ═══════════════════════════════════════════════════════
-let portrait = new Image();
-portrait.crossOrigin = 'anonymous';
+let portrait = null;          // Image element, set after blob-URL load succeeds
 
 let hole = {};
 let mediaStream = null;
@@ -295,19 +294,196 @@ function rrPath(ctx, x, y, w, h, r = 8) {
   ctx.closePath();
 }
 
+// ── Programmatic "Mona Lisa" portrait drawn with Canvas 2D ──────────────────
+function drawFallbackPortrait(ctx, cw, ch) {
+  const sc = cw / 280;
+
+  // Background – warm aged canvas
+  const bg = ctx.createLinearGradient(0, 0, 0, ch);
+  bg.addColorStop(0,   '#52412a');
+  bg.addColorStop(0.45,'#6a4e2c');
+  bg.addColorStop(1,   '#2a1a08');
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, cw, ch);
+
+  // Left landscape hill
+  ctx.fillStyle = '#3d5a48';
+  ctx.beginPath();
+  ctx.moveTo(0, ch * 0.48);
+  ctx.quadraticCurveTo(cw * 0.12, ch * 0.22, cw * 0.32, ch * 0.36);
+  ctx.lineTo(cw * 0.32, ch); ctx.lineTo(0, ch);
+  ctx.fill();
+
+  // Right landscape hill
+  ctx.fillStyle = '#2d4a38';
+  ctx.beginPath();
+  ctx.moveTo(cw, ch * 0.52);
+  ctx.quadraticCurveTo(cw * 0.88, ch * 0.24, cw * 0.68, ch * 0.38);
+  ctx.lineTo(cw * 0.68, ch); ctx.lineTo(cw, ch);
+  ctx.fill();
+
+  // Misty sky overlay
+  const sky = ctx.createLinearGradient(0, 0, 0, ch * 0.38);
+  sky.addColorStop(0, 'rgba(50,75,90,.75)');
+  sky.addColorStop(1, 'rgba(50,75,90,0)');
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, cw, ch * 0.38);
+
+  // Dark dress / body – lower half
+  ctx.fillStyle = '#2c3322';
+  ctx.beginPath();
+  ctx.moveTo(0, ch);
+  ctx.lineTo(cw, ch);
+  ctx.lineTo(cw * 0.94, ch * 0.64);
+  ctx.bezierCurveTo(cw * 0.82, ch * 0.54, cw * 0.65, ch * 0.54, cw * 0.58, ch * 0.62);
+  ctx.bezierCurveTo(cw * 0.55, ch * 0.67, cw * 0.50, ch * 0.67, cw * 0.42, ch * 0.62);
+  ctx.bezierCurveTo(cw * 0.35, ch * 0.54, cw * 0.18, ch * 0.54, cw * 0.06, ch * 0.64);
+  ctx.closePath();
+  ctx.fill();
+
+  // Dress fold lines
+  ctx.strokeStyle = 'rgba(100,90,60,.35)';
+  ctx.lineWidth = 1.5 * sc;
+  [[0.18, 0.72, 0.16, 1.0], [0.42, 0.70, 0.40, 1.0], [0.62, 0.70, 0.64, 1.0]]
+    .forEach(([x1, y1, x2, y2]) => {
+      ctx.beginPath();
+      ctx.moveTo(cw * x1, ch * y1);
+      ctx.lineTo(cw * x2, ch * y2);
+      ctx.stroke();
+    });
+
+  const skin   = '#c09060';
+  const skinLt = '#d4a878';
+
+  // Neck
+  ctx.fillStyle = skin;
+  ctx.beginPath();
+  ctx.ellipse(cw * 0.5, ch * 0.635, cw * 0.065, ch * 0.055, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // ── Face oval ──
+  const fcx = cw * 0.5, fcy = ch * 0.355;
+  const frx = cw * 0.21, fry = ch * 0.215;
+
+  ctx.fillStyle = skin;
+  ctx.beginPath();
+  ctx.ellipse(fcx, fcy, frx, fry, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Face edge shadow
+  const fSh = ctx.createRadialGradient(fcx, fcy, frx * 0.4, fcx, fcy, frx * 1.05);
+  fSh.addColorStop(0, 'rgba(0,0,0,0)');
+  fSh.addColorStop(1, 'rgba(0,0,0,.22)');
+  ctx.fillStyle = fSh;
+  ctx.beginPath();
+  ctx.ellipse(fcx, fcy, frx, fry, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Chin patch below hole (the hole ends at HOLE_YF+HOLE_HF = 0.57*ch)
+  ctx.fillStyle = skin;
+  ctx.beginPath();
+  ctx.ellipse(cw * 0.5, ch * 0.592, cw * 0.095, ch * 0.038, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // ── Hair ──
+  const hairC = '#221208';
+  const hairSh = '#3a2010';
+
+  // Left hair mass
+  ctx.fillStyle = hairC;
+  ctx.beginPath();
+  ctx.moveTo(fcx - frx, fcy - fry * 0.4);
+  ctx.bezierCurveTo(cw * 0.18, fcy - fry * 0.15, cw * 0.14, fcy + fry * 0.5, cw * 0.16, fcy + fry * 0.95);
+  ctx.bezierCurveTo(cw * 0.20, fcy + fry * 1.1, cw * 0.30, fcy + fry * 0.85, fcx - frx * 0.82, fcy - fry * 0.72);
+  ctx.fill();
+
+  // Right hair mass
+  ctx.beginPath();
+  ctx.moveTo(fcx + frx, fcy - fry * 0.4);
+  ctx.bezierCurveTo(cw * 0.82, fcy - fry * 0.15, cw * 0.86, fcy + fry * 0.5, cw * 0.84, fcy + fry * 0.95);
+  ctx.bezierCurveTo(cw * 0.80, fcy + fry * 1.1, cw * 0.70, fcy + fry * 0.85, fcx + frx * 0.82, fcy - fry * 0.72);
+  ctx.fill();
+
+  // Top hair / head covering
+  ctx.fillStyle = '#1a0e06';
+  ctx.beginPath();
+  ctx.ellipse(fcx, fcy - fry * 0.68, frx * 0.88, fry * 0.48, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Hair highlights (subtle strands)
+  ctx.strokeStyle = hairSh;
+  ctx.lineWidth = 1 * sc;
+  [[-0.28, -0.3, -0.30, 0.6], [0.28, -0.3, 0.30, 0.6]].forEach(([dx1,dy1,dx2,dy2]) => {
+    ctx.beginPath();
+    ctx.moveTo(fcx + frx * dx1, fcy + fry * dy1);
+    ctx.quadraticCurveTo(fcx + frx * dx1 * 1.4, fcy + fry * 0.15, fcx + frx * dx2, fcy + fry * dy2);
+    ctx.stroke();
+  });
+
+  // ── Eyes (above the hole) ──
+  // Hole top = HOLE_YF * ch = 0.335 * ch
+  // Eyes at ch * 0.255 (safely above hole)
+  const eyeY = ch * 0.258;
+  const eyeOX = cw * 0.083; // horizontal offset from center
+
+  function drawEye(ex, ey) {
+    // White
+    ctx.fillStyle = skinLt;
+    ctx.beginPath();
+    ctx.ellipse(ex, ey, cw * 0.048, ch * 0.017, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Iris
+    ctx.fillStyle = '#4a3215';
+    ctx.beginPath();
+    ctx.ellipse(ex, ey, cw * 0.024, ch * 0.015, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Pupil
+    ctx.fillStyle = '#14080a';
+    ctx.beginPath();
+    ctx.ellipse(ex, ey, cw * 0.011, ch * 0.012, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Upper lid line
+    ctx.strokeStyle = '#3a2010'; ctx.lineWidth = 1.3 * sc;
+    ctx.beginPath();
+    ctx.ellipse(ex, ey - ch * 0.002, cw * 0.048, ch * 0.017, 0, Math.PI, 0);
+    ctx.stroke();
+  }
+
+  drawEye(fcx - eyeOX, eyeY);
+  drawEye(fcx + eyeOX, eyeY);
+
+  // Barely-there brows (Mona Lisa has famously faint brows)
+  ctx.strokeStyle = 'rgba(55,35,12,.45)';
+  ctx.lineWidth = 1.4 * sc;
+  ctx.beginPath();
+  ctx.moveTo(fcx - eyeOX - cw * 0.045, eyeY - ch * 0.028);
+  ctx.quadraticCurveTo(fcx - eyeOX, eyeY - ch * 0.034, fcx - eyeOX + cw * 0.038, eyeY - ch * 0.025);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(fcx + eyeOX - cw * 0.038, eyeY - ch * 0.025);
+  ctx.quadraticCurveTo(fcx + eyeOX, eyeY - ch * 0.034, fcx + eyeOX + cw * 0.045, eyeY - ch * 0.028);
+  ctx.stroke();
+
+  // ── Label ──
+  ctx.fillStyle = 'rgba(225,185,72,.82)';
+  ctx.font = `bold ${Math.round(cw * 0.071)}px Georgia, serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.fillText('MONA LISA', cw / 2, ch * 0.978);
+
+  // ── Vignette ──
+  const vig = ctx.createRadialGradient(cw/2, ch/2, cw * 0.28, cw/2, ch/2, cw * 0.88);
+  vig.addColorStop(0, 'rgba(0,0,0,0)');
+  vig.addColorStop(1, 'rgba(0,0,0,.52)');
+  ctx.fillStyle = vig; ctx.fillRect(0, 0, cw, ch);
+}
+
+// ── Draw portrait (real image or fallback) + punch hole + gold border ────────
 function drawPortraitWithHole(ctx, cw, ch) {
   ctx.clearRect(0, 0, cw, ch);
-  if (portrait.complete && portrait.naturalWidth > 0) {
-    ctx.drawImage(portrait, 0, 0, cw, ch);
+
+  if (portrait && portrait.complete && portrait.naturalWidth > 0) {
+    try { ctx.drawImage(portrait, 0, 0, cw, ch); }
+    catch(_) { drawFallbackPortrait(ctx, cw, ch); }
   } else {
-    // Fallback gradient background
-    const g = ctx.createLinearGradient(0, 0, cw, ch);
-    g.addColorStop(0, '#3a2010'); g.addColorStop(1, '#1a0a04');
-    ctx.fillStyle = g; ctx.fillRect(0, 0, cw, ch);
-    ctx.fillStyle = 'rgba(240,192,64,.25)';
-    ctx.font = `${cw * 0.35}px serif`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('🎭', cw / 2, ch / 2);
+    drawFallbackPortrait(ctx, cw, ch);
   }
 
   const sx = cw / W, sy = ch / H;
@@ -468,10 +644,17 @@ async function animateReveal(frozen) {
   spawnSparks(35, winCanvas);
   await sleep(280);
 
+  const drawPortraitFull = (ctx) => {
+    if (portrait && portrait.complete && portrait.naturalWidth > 0) {
+      try { ctx.drawImage(portrait, 0, 0, W, H); return; } catch(_) {}
+    }
+    drawFallbackPortrait(ctx, W, H);
+  };
+
   for (let i = 0; i <= STEPS; i++) {
     const t = eio(i / STEPS);
     winCtx.clearRect(0, 0, W, H);
-    winCtx.drawImage(portrait, 0, 0, W, H);
+    drawPortraitFull(winCtx);
 
     // Frozen face fades out of the hole
     const fα = Math.max(0, 1 - t * 1.55);
@@ -499,7 +682,7 @@ async function animateReveal(frozen) {
 
   // Final clean portrait + subtle gold veil
   winCtx.clearRect(0, 0, W, H);
-  winCtx.drawImage(portrait, 0, 0, W, H);
+  drawPortraitFull(winCtx);
   winCtx.save(); winCtx.globalAlpha = 0.11;
   winCtx.fillStyle = '#f0c040'; winCtx.fillRect(0, 0, W, H);
   winCtx.restore();
@@ -622,17 +805,25 @@ async function boot() {
   initStars();
   computeHole();
 
-  // 1 · Load portrait
+  // 1 · Load portrait via fetch → blob URL (bypasses all canvas CORS issues)
   $('load-text').textContent = 'Đang tải chân dung huyền bí… 🖼️';
-  await new Promise((res, rej) => {
-    portrait.onload  = res;
-    portrait.onerror = () => {
-      // Portrait failed → use fallback silently (game still works without it)
-      console.warn('Portrait image failed to load – using fallback');
-      res();
-    };
-    portrait.src = PORTRAIT_SRC;
-  });
+  try {
+    const resp = await fetch(PORTRAIT_SRC);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const blob    = await resp.blob();
+    const blobURL = URL.createObjectURL(blob);
+    portrait = new Image();
+    await new Promise((res, rej) => {
+      portrait.onload  = res;
+      portrait.onerror = rej;
+      portrait.src = blobURL;
+    });
+    // blob URL is same-origin → drawImage to canvas is always safe ✓
+  } catch (e) {
+    // Fallback portrait (programmatic) will be used – no crash
+    console.warn('Portrait fetch failed, using canvas fallback:', e.message);
+    portrait = null;
+  }
 
   // 2 · Load AI models
   $('load-text').textContent = 'Đang nạp trí tuệ nhân tạo… 🤖';
