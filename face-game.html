@@ -250,6 +250,46 @@
     #toast-bottom.success{ border: 1px solid rgba(80,255,130,.45); color: #80ffaa; }
     #toast-bottom.error  { border: 1px solid rgba(255,100,80,.45);  color: #ff9070; }
     #toast-bottom.info   { border: 1px solid rgba(240,192,64,.35);  color: #f0c040; }
+
+    /* ═══ LEVEL BAR (bottom-fixed, shown on start/win screens) ═══ */
+    #level-bar {
+      position: fixed;
+      bottom: max(env(safe-area-inset-bottom, 0px), 10px);
+      left: 0; right: 0;
+      z-index: 51;
+      display: flex; flex-direction: column;
+      align-items: center; gap: 5px;
+      padding: 0 12px 4px;
+      pointer-events: auto;
+    }
+    .lv-label {
+      font-size: .68em; color: rgba(255,255,255,.32);
+      letter-spacing: .07em; text-transform: uppercase;
+    }
+    .lv-pips { display: flex; gap: 6px; flex-wrap: nowrap; }
+    .lv-pip {
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+      padding: 7px 10px; min-width: 52px;
+      border: 1px solid rgba(240,192,64,.18);
+      border-radius: 12px;
+      background: rgba(6,5,15,.72);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      cursor: pointer; color: rgba(255,255,255,.38);
+      font-size: .82em; font-family: inherit;
+      transition: transform .15s, background .2s, border-color .2s, color .2s;
+    }
+    .lv-pip span { font-size: .66em; white-space: nowrap; }
+    .lv-pip:hover { transform: scale(1.10); background: rgba(24,16,48,.88); }
+    .lv-pip.active {
+      border-color: rgba(240,192,64,.72);
+      color: #f0c040;
+      background: rgba(30,18,4,.90);
+      box-shadow: 0 0 14px rgba(240,192,64,.32), 0 2px 10px rgba(0,0,0,.5);
+    }
+    /* Give the start-overlay's inner content more bottom padding so level bar doesn't overlap */
+    #start-overlay .inner { padding-bottom: 74px; }
+    #again-wrap { bottom: max(env(safe-area-inset-bottom,0px), 80px); }
   </style>
 </head>
 <body>
@@ -293,6 +333,18 @@
   <button id="again-btn" class="btn btn-gold">🔄 Chơi Lại</button>
 </div>
 
+<!-- ═══ LEVEL BAR ═══ -->
+<div id="level-bar" class="hidden">
+  <span class="lv-label">Độ khó</span>
+  <div class="lv-pips">
+    <button class="lv-pip" data-lv="0">🌱<span>Dễ</span></button>
+    <button class="lv-pip" data-lv="1">⚡<span>Vừa</span></button>
+    <button class="lv-pip active" data-lv="2">🔥<span>Khó</span></button>
+    <button class="lv-pip" data-lv="3">💎<span>Pro</span></button>
+    <button class="lv-pip" data-lv="4">👑<span>Legend</span></button>
+  </div>
+</div>
+
 <!-- ═══ SETTINGS BUTTON + FILE INPUT ═══ -->
 <button id="settings-btn" title="Đổi hình nhân vật">
   <svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor">
@@ -332,9 +384,15 @@ let HOLE_HF    = 0.085;
 let NOSE_IN_H  = 0.30;
 let MOUTH_IN_H = 0.72;
 
-const TOLERANCE_F = 0.30;
-const BUFFER_SIZE = 50;
-const WIN_THRESH  = 0.80;
+// Difficulty levels — scoring parameters and landmark count
+const LEVELS = [
+  { name:'Dễ',    icon:'🌱', tolF:0.42, winThresh:0.60, bufN:20, scaleMin:0.45, scaleMax:2.20, sFloor:0.45, sLen:5,  useEyes:false, useNoseBridge:false },
+  { name:'Vừa',   icon:'⚡', tolF:0.34, winThresh:0.70, bufN:35, scaleMin:0.50, scaleMax:2.00, sFloor:0.48, sLen:6,  useEyes:false, useNoseBridge:false },
+  { name:'Khó',   icon:'🔥', tolF:0.28, winThresh:0.80, bufN:50, scaleMin:0.55, scaleMax:1.90, sFloor:0.55, sLen:8,  useEyes:false, useNoseBridge:false },
+  { name:'Pro',   icon:'💎', tolF:0.24, winThresh:0.83, bufN:55, scaleMin:0.58, scaleMax:1.75, sFloor:0.58, sLen:8,  useEyes:true,  useNoseBridge:false },
+  { name:'Legend',icon:'👑', tolF:0.20, winThresh:0.86, bufN:65, scaleMin:0.60, scaleMax:1.65, sFloor:0.62, sLen:10, useEyes:true,  useNoseBridge:true  },
+];
+let currentLevel = 2;  // default: Khó 🔥
 
 // 7 landmark targets within the hole (rx/ry in 0..1 hole-local space)
 // Order: [noseTip, noseL, noseR, mouthL, mouthR, lipTop, lipBot]
@@ -349,6 +407,15 @@ const DEFAULT_TARGETS = [
   { rx: 0.50, ry: 0.84 },  // bottom lip center
 ];
 let holeTargets = DEFAULT_TARGETS.map(t => ({ ...t }));
+
+// Eye + nose-bridge targets in portrait-image fractions (rx/ry ∈ 0..1 of imgNW/imgNH)
+// Order: [rightEyeCenter, leftEyeCenter, noseBridge(pts[27])]
+// Populated by calibrateHole(); defaults tuned for Mona Lisa 1920×2861
+let eyeTargetsFrac = [
+  { rx: 0.385, ry: 0.222 },
+  { rx: 0.595, ry: 0.222 },
+  { rx: 0.498, ry: 0.185 },
+];
 
 // ═══════════════════════════════════════════════════════
 //  ELEMENTS
@@ -419,7 +486,13 @@ function computeHole() {
     x: (hole.targets[3].x + hole.targets[4].x) / 2,
     y: (hole.targets[5].y + hole.targets[6].y) / 2,
   };
-  hole.tol = hole.w * TOLERANCE_F;
+  hole.tol = hole.w * LEVELS[currentLevel].tolF;
+  // Eye + bridge targets in screen coords (outside hole, up in portrait)
+  const { s: es, ox: eox, oy: eoy } = coverXform(pCanvas.width, pCanvas.height);
+  hole.eyeTargets = eyeTargetsFrac.map(t => ({
+    x: t.rx * imgNW * es + eox,
+    y: t.ry * imgNH * es + eoy,
+  }));
 }
 
 // ═══════════════════════════════════════════════════════
@@ -466,6 +539,17 @@ async function calibrateHole() {
       { rx: (mouthR.x  - hx) / hw, ry: (mouthR.y  - hy) / hh },
       { rx: (lipTop.x  - hx) / hw, ry: (lipTop.y  - hy) / hh },
       { rx: (lipBot.x  - hx) / hw, ry: (lipBot.y  - hy) / hh },
+    ];
+
+    // Eye centers and nose bridge as portrait-image fractions for levels 4-5
+    const rEPts = pts.slice(36, 42);
+    const lEPts = pts.slice(42, 48);
+    const rEC = { x: rEPts.reduce((s,p)=>s+p.x,0)/6, y: rEPts.reduce((s,p)=>s+p.y,0)/6 };
+    const lEC = { x: lEPts.reduce((s,p)=>s+p.x,0)/6, y: lEPts.reduce((s,p)=>s+p.y,0)/6 };
+    eyeTargetsFrac = [
+      { rx: rEC.x / imgNW, ry: rEC.y / imgNH },
+      { rx: lEC.x / imgNW, ry: lEC.y / imgNH },
+      { rx: pts[27].x / imgNW, ry: pts[27].y / imgNH },
     ];
 
     computeHole();
@@ -623,11 +707,11 @@ function _fallbackAt402x602(ctx) {
 // ═══════════════════════════════════════════════════════
 //  GUIDE OVERLAY
 // ═══════════════════════════════════════════════════════
-// drawGuide(playerPts, scores, noFace)
-//   playerPts : array of 7 {x,y} — null when no face
-//   scores    : array of 7 alignment scores 0..1
+// drawGuide(playerPts, scores, noFace, showEyes, showBridge)
+//   playerPts : array of 7+ {x,y} — null when no face
+//   scores    : array of alignment scores 0..1
 //   noFace    : true → skip player dots / skeleton
-function drawGuide(playerPts, scores, noFace) {
+function drawGuide(playerPts, scores, noFace, showEyes, showBridge) {
   gCtx.clearRect(0, 0, gCanvas.width, gCanvas.height);
   const pulse = .5 + .5 * Math.sin(Date.now() / 380);
 
@@ -706,6 +790,39 @@ function drawGuide(playerPts, scores, noFace) {
       gCtx.stroke(); gCtx.restore();
     }
   }
+
+  // ── Eye + nose-bridge targets for levels 4-5 ──────────────────────────────
+  if (showEyes && hole.eyeTargets) {
+    const rEye = hole.eyeTargets[0], lEye = hole.eyeTargets[1];
+    const s7 = (scores && scores[7] != null) ? scores[7] : 0.5;
+    const s8 = (scores && scores[8] != null) ? scores[8] : 0.5;
+    crosshair(rEye.x, rEye.y, s7);
+    crosshair(lEye.x, lEye.y, s8);
+    // Dashed connector line between eye targets
+    skelLine(rEye, lEye, scoreColor((s7 + s8) / 2, 1));
+    if (showBridge && hole.eyeTargets[2]) {
+      const s9 = (scores && scores[9] != null) ? scores[9] : 0.5;
+      crosshair(hole.eyeTargets[2].x, hole.eyeTargets[2].y, s9);
+      // Connect nose bridge to each eye
+      skelLine(hole.eyeTargets[2], rEye, scoreColor((s9+s7)/2, 1));
+      skelLine(hole.eyeTargets[2], lEye, scoreColor((s9+s8)/2, 1));
+    }
+    // Player eye dots when face is detected
+    if (playerPts && !noFace && playerPts.length >= 9) {
+      [7, 8].forEach(i => {
+        const col = scoreColor(scores[i], 0.90);
+        gCtx.save(); gCtx.beginPath(); gCtx.arc(playerPts[i].x, playerPts[i].y, 6, 0, Math.PI*2);
+        gCtx.fillStyle = col; gCtx.shadowColor = col; gCtx.shadowBlur = 12;
+        gCtx.fill(); gCtx.restore();
+      });
+      if (showBridge && playerPts[9]) {
+        const col = scoreColor(scores[9] ?? 0.5, 0.90);
+        gCtx.save(); gCtx.beginPath(); gCtx.arc(playerPts[9].x, playerPts[9].y, 5, 0, Math.PI*2);
+        gCtx.fillStyle = col; gCtx.shadowColor = col; gCtx.shadowBlur = 10;
+        gCtx.fill(); gCtx.restore();
+      }
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -726,66 +843,79 @@ async function detect() {
       .withFaceLandmarks(true);
 
     if (!det) {
-      drawGuide(null, null, true);
+      const lv0 = LEVELS[currentLevel];
+      drawGuide(null, null, true, lv0.useEyes, lv0.useNoseBridge);
       push(0); setProgress(avg());
       statusText.textContent = '👆 Di chuyển mặt vào ô vàng…';
       return;
     }
 
     const pts = det.landmarks.positions;
-    // 7 player landmarks: [noseTip, noseL, noseR, mouthL, mouthR, lipTop, lipBot]
-    const playerPts = [pts[30], pts[31], pts[35], pts[48], pts[54], pts[51], pts[57]];
+    const lv  = LEVELS[currentLevel];
+    const base = [pts[30], pts[31], pts[35], pts[48], pts[54], pts[51], pts[57]];
+    const playerPts = lv.useEyes
+      ? [...base, eyeCenter(pts,36,42), eyeCenter(pts,42,48),
+         ...(lv.useNoseBridge ? [pts[27]] : [])]
+      : base;
+    const tgtPts = lv.useEyes
+      ? [...hole.targets, hole.eyeTargets[0], hole.eyeTargets[1],
+         ...(lv.useNoseBridge ? [hole.eyeTargets[2]] : [])]
+      : hole.targets;
 
     // ── Scale check ───────────────────────────────────────────────────────────
-    const playerSpanV = playerPts[0].y - playerPts[6].y;  // nose tip to bottom lip (signed ok)
-    const targetSpanV = hole.noseTgt.y  - hole.targets[6].y;
-    const scaleRatio  = Math.abs(playerSpanV) / Math.abs(targetSpanV || 1);
-    // Simpler direct vertical span: nose tip y → mouth center y
     const pSpanV2 = (playerPts[5].y + playerPts[6].y)/2 - playerPts[0].y;
     const tSpanV2 = hole.mouthTgt.y - hole.noseTgt.y;
     const sRatio  = pSpanV2 / (tSpanV2 || 1);
-    const sizeOk  = sRatio >= 0.55 && sRatio <= 1.90;
+    const sizeOk  = sRatio >= lv.scaleMin && sRatio <= lv.scaleMax;
 
-    // Per-landmark scores (computed before drawGuide so guide shows color even on size-fail)
-    const dists  = playerPts.map((p, i) => dist(p, hole.targets[i]));
+    const dists  = playerPts.map((p, i) => dist(p, tgtPts[i]));
     const scores = dists.map(d => sc(d));
 
-    drawGuide(playerPts, scores, !sizeOk);
+    drawGuide(playerPts, scores, !sizeOk, lv.useEyes, lv.useNoseBridge);
 
     if (!sizeOk) {
       push(0); setProgress(avg());
-      statusText.textContent = sRatio < 0.55
+      statusText.textContent = sRatio < lv.scaleMin
         ? '📏 Lại gần hơn — mặt còn quá nhỏ!'
         : '📏 Lùi ra xa hơn — mặt quá to!';
       return;
     }
 
-    // Weighted geometric mean over 7 landmarks
-    // Weights: structural anchors (noseTip, mouth corners) = 1.5; lip centers = 1.0; nostrils = 0.75
-    // W_SUM = 1.5+0.75+0.75+1.5+1.5+1.0+1.0 = 8.0
-    const W = [1.5, 0.75, 0.75, 1.5, 1.5, 1.0, 1.0];
+    // Weighted geometric mean — weight sets per landmark count
+    const BASE_W = [1.5, 0.75, 0.75, 1.5, 1.5, 1.0, 1.0];
+    const W = lv.useEyes
+      ? [...BASE_W, 1.2, 1.2, ...(lv.useNoseBridge ? [0.8] : [])]
+      : BASE_W;
+    const W_SUM = W.reduce((a,b) => a+b, 0);
     let logSum = 0;
-    for (let i = 0; i < 7; i++) logSum += W[i] * Math.log(Math.max(scores[i], 1e-6));
-    push(Math.exp(logSum / 8.0));
+    for (let i = 0; i < W.length; i++) logSum += W[i] * Math.log(Math.max(scores[i], 1e-6));
+    push(Math.exp(logSum / W_SUM));
 
     const a = avg(); setProgress(a);
     const nOk = dists[0] < hole.tol;
     const mOk = dists[3] < hole.tol && dists[4] < hole.tol;
+    const eOk = !lv.useEyes || (dists[7] < hole.tol && dists[8] < hole.tol);
     statusText.textContent =
-      nOk && mOk ? '🎯 Giữ nguyên…' :
-      nOk || mOk ? '📐 Gần rồi! Điều chỉnh thêm' :
-                   '👆 Di chuyển mặt vào ô vàng…';
+      nOk && mOk && eOk ? '🎯 Giữ nguyên…' :
+      nOk || mOk        ? '📐 Gần rồi! Điều chỉnh thêm' :
+                          '👆 Di chuyển mặt vào ô vàng…';
 
-    const streak = alignBuf.slice(-8).every(v => v >= 0.55);
-    if (a >= WIN_THRESH && alignBuf.length >= Math.floor(BUFFER_SIZE*.85) && streak) triggerWin();
+    const streak = alignBuf.slice(-lv.sLen).every(v => v >= lv.sFloor);
+    if (a >= lv.winThresh && alignBuf.length >= Math.floor(lv.bufN*.85) && streak) triggerWin();
   } catch (_) {}
 }
 
 const dist = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
 const sc   = d    => Math.max(0, 1 - d/(hole.tol*2.5));
-const push = v    => { alignBuf.push(v); if(alignBuf.length>BUFFER_SIZE) alignBuf.shift(); };
+const push = v    => { alignBuf.push(v); if(alignBuf.length>LEVELS[currentLevel].bufN) alignBuf.shift(); };
 const avg  = ()   => alignBuf.length ? alignBuf.reduce((a,b)=>a+b,0)/alignBuf.length : 0;
 const setProgress = f => { progressFill.style.width = Math.min(100,f*100)+'%'; };
+
+function eyeCenter(pts, start, end) {
+  let sx = 0, sy = 0, n = end - start;
+  for (let i = start; i < end; i++) { sx += pts[i].x; sy += pts[i].y; }
+  return { x: sx/n, y: sy/n };
+}
 
 // ═══════════════════════════════════════════════════════
 //  GUIDE ANIMATION LOOP (redraws portrait+hole every frame)
@@ -881,6 +1011,7 @@ async function animateReveal(frozen) {
     `<span style="font-size:.7em;color:rgba(255,200,60,.65)">🎨 Leonardo đã vẽ bạn từ 500 năm trước!</span>`;
   $('win-msg-wrap').classList.remove('hidden');
   $('again-wrap').classList.remove('hidden');
+  showLevelBar(true);
 
   for (let i = 0; i < 4; i++) { await sleep(350); spawnSparks(22); }
 }
@@ -1021,6 +1152,7 @@ async function startGame() {
   $('win-msg-wrap').classList.add('hidden');
   $('again-wrap').classList.add('hidden');
   winCanvas.classList.add('hidden');
+  showLevelBar(false);
 
   $('title-pill').style.display = 'block';
   $('hud').style.display = 'flex';
@@ -1081,6 +1213,7 @@ async function boot() {
   showEdges(false);
   $('loading-pill').classList.add('hidden');
   $('start-overlay').classList.remove('hidden');
+  showLevelBar(true);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1094,6 +1227,22 @@ function showToast(msg, type = 'info', ms = 3200) {
   clearTimeout(_toastTimer);
   _toastTimer = setTimeout(() => { el.className = type; }, ms);
 }
+
+// ═══════════════════════════════════════════════════════
+//  LEVEL BAR
+// ═══════════════════════════════════════════════════════
+function setLevel(lv) {
+  currentLevel = lv;
+  alignBuf = [];
+  computeHole();
+  document.querySelectorAll('.lv-pip').forEach((el, i) => el.classList.toggle('active', i === lv));
+}
+
+function showLevelBar(show) { $('level-bar').classList.toggle('hidden', !show); }
+
+document.querySelectorAll('.lv-pip').forEach(el => {
+  el.addEventListener('click', () => setLevel(parseInt(el.dataset.lv)));
+});
 
 // ═══════════════════════════════════════════════════════
 //  SETTINGS – CUSTOM IMAGE UPLOAD
@@ -1112,6 +1261,7 @@ $('settings-btn').addEventListener('click', () => {
   }
   $('img-upload').value = '';
   $('img-upload').click();
+  showLevelBar(true);
 });
 
 $('img-upload').addEventListener('change', async function () {
@@ -1139,6 +1289,9 @@ $('img-upload').addEventListener('change', async function () {
     HOLE_XF = 0.360; HOLE_YF = 0.292; HOLE_WF = 0.195; HOLE_HF = 0.085;
     NOSE_IN_H = 0.30; MOUTH_IN_H = 0.72;
     holeTargets = DEFAULT_TARGETS.map(t => ({ ...t }));
+    eyeTargetsFrac = [
+      { rx: 0.385, ry: 0.222 }, { rx: 0.595, ry: 0.222 }, { rx: 0.498, ry: 0.185 },
+    ];
     computeHole();
     drawPortraitWithHole(pCtx, pCanvas.width, pCanvas.height);
   } catch (e) {
@@ -1183,6 +1336,7 @@ $('again-btn').addEventListener('click', () => {
     $('loading-pill').classList.add('hidden');
     drawPortraitWithHole(pCtx, pCanvas.width, pCanvas.height);
     $('start-overlay').classList.remove('hidden');
+    showLevelBar(true);
   }, 600);
 });
 
