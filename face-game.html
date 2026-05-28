@@ -659,13 +659,31 @@ async function detect() {
     const nosePos  = pts[30];
     const mouthPos = { x:(pts[48].x+pts[54].x)/2, y:(pts[51].y+pts[57].y)/2 };
 
+    // ── Scale check ──────────────────────────────────────────────────────────
+    // Player's vertical nose-tip→mouth-center span must match the portrait's
+    // same span inside the hole.  Too small = person standing too far away;
+    // the composite would look bad because the face wouldn't fill the hole.
+    const playerSpanV = mouthPos.y - nosePos.y;
+    const targetSpanV = hole.h * (MOUTH_IN_H - NOSE_IN_H); // portrait's nose→mouth in hole
+    const scaleRatio  = playerSpanV / targetSpanV;          // 1.0 = perfect fill
+    const sizeOk      = scaleRatio >= 0.60 && scaleRatio <= 1.80;
+
     const nd  = dist(nosePos,  hole.noseTgt);
     const md  = dist(mouthPos, hole.mouthTgt);
     const nOk = nd < hole.tol;
     const mOk = md < hole.tol;
 
     drawGuide(nosePos, mouthPos, nOk, mOk, false);
-    // product: both nose AND mouth must be aligned; one misaligned drags score down fast
+
+    if (!sizeOk) {
+      push(0); setProgress(avg());
+      statusText.textContent = scaleRatio < 0.60
+        ? '📏 Lại gần hơn — mặt còn quá nhỏ!'
+        : '📏 Lùi ra xa hơn — mặt quá to!';
+      return;
+    }
+
+    // product score: both must be aligned; one off drags score down hard
     push(sc(nd) * sc(md));
     const a = avg();
     setProgress(a);
