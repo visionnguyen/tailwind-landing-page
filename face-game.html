@@ -333,8 +333,8 @@ let NOSE_IN_H  = 0.30;
 let MOUTH_IN_H = 0.72;
 
 const TOLERANCE_F = 0.30;  // alignment tolerance as fraction of hole.w
-const BUFFER_SIZE = 36;
-const WIN_THRESH  = 0.76;
+const BUFFER_SIZE = 50;    // ~5.5 s at 110 ms/frame
+const WIN_THRESH  = 0.80;  // product score needed (≈ both individually ≥ 89 %)
 
 // ═══════════════════════════════════════════════════════
 //  ELEMENTS
@@ -665,7 +665,8 @@ async function detect() {
     const mOk = md < hole.tol;
 
     drawGuide(nosePos, mouthPos, nOk, mOk, false);
-    push(sc(nd)*.5 + sc(md)*.5);
+    // product: both nose AND mouth must be aligned; one misaligned drags score down fast
+    push(sc(nd) * sc(md));
     const a = avg();
     setProgress(a);
 
@@ -674,7 +675,9 @@ async function detect() {
       nOk || mOk ? '📐 Gần rồi! Điều chỉnh thêm' :
                    '👆 Di chuyển mặt vào ô vàng…';
 
-    if (a >= WIN_THRESH && alignBuf.length >= Math.floor(BUFFER_SIZE*.85)) triggerWin();
+    // require rolling average + last 8 frames all individually above floor
+    const streak = alignBuf.slice(-8).every(v => v >= 0.55);
+    if (a >= WIN_THRESH && alignBuf.length >= Math.floor(BUFFER_SIZE*.85) && streak) triggerWin();
   } catch (_) {}
 }
 
